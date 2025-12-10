@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>Frontend Nginx</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 50px;
+            text-align: center;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Benvenuto!</h1>
+    <p>Questa è una pagina HTML servita da Nginx.</p>
+
+    <button onclick="fetchUsers()">Carica utenti dal backend</button>
+
+    <pre id="result"></pre>
+
+    <script>
+        async function fetchUsers() {
+            const res = await fetch('/api/users');
+            const data = await res.json();
+            document.getElementById('result').innerText = JSON.stringify(data, null, 2);
+        }
+    </script>
+
+</body>
+</html>
