@@ -1,16 +1,13 @@
-version: "3.9"
-
 services:
   frontend:
-    image: nginx:latest
+    build: ./frontend
     container_name: frontend
     ports:
-      - "80:80"
-    volumes:
-      - ./frontend:/usr/share/nginx/html:ro
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - "3000:80"
     depends_on:
       - backend
+    networks:
+      - smart_home_network
 
   backend:
     build: ./backend
@@ -22,6 +19,8 @@ services:
       - mongo
     environment:
       - MONGODB_URL=mongodb://mongo:27017/mydb
+    networks:
+      - smart_home_network
 
   mongo:
     image: mongo:6
@@ -31,6 +30,12 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    networks:
+      - smart_home_network
 
 volumes:
   mongo_data:
+
+networks:
+  smart_home_network:
+    driver: bridge
