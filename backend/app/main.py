@@ -1,0 +1,185 @@
+import asyncio
+from contextlib import asynccontextmanager
+from typing import Optional
+from fastapi import FastAPI, Depends
+from fastapi.middleware.cors import CORSMiddleware
+import os
+
+from app.config_loader import ConfigLoader
+from app.sensors.factory import SensorFactory
+from app.db.mongo_client import MongoClientWrapper
+from app.services.mqtt_client import MQTTClient
+from app.services.business_logic import BusinessLogic
+from app.api.routes import sensors, frontend
+from app import dependencies
+
+
+# Variabili globali per i servizi
+business_logic: BusinessLogic = None
+mongo_client: MongoClientWrapper = None
+mqtt_client: Optional[MQTTClient] = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Gestisce il ciclo di vita dell'applicazione"""
+    global business_logic, mongo_client, mqtt_client
+    
+    # Aggiorna le variabili globali in dependencies
+    dependencies.business_logic = None
+    dependencies.mongo_client = None
+    
+    # Startup
+    print("Avvio applicazione...")
+    
+    # Connessione MongoDB
+    mongo_client = MongoClientWrapper()
+    try:
+        mongo_client.connect()
+    except Exception as e:
+        print(f"Avviso: Impossibile connettersi a MongoDB: {e}")
+        print("L'applicazione continuerà senza MongoDB")
+        mongo_client = None
+    
+    # Carica template e salvalo nel DB se MongoDB è disponibile
+    if mongo_client is not None:
+        try:
+            from pathlib import Path
+            config_path = Path(__file__).parent / "sensors_config.yaml"
+            config_loader = ConfigLoader(str(config_path))
+            template = config_loader.load_template()
+            
+            # Salva il template nel DB (sovrascrive se esiste già)
+            mongo_client.save_sensor_template(template)
+            print("Template sensori caricato e salvato nel database")
+        except Exception as e:
+            print(f"Avviso: Errore nel caricamento del template: {e}")
+            # Prova a caricare il template dal DB se esiste
+            template = mongo_client.get_sensor_template()
+            if template is not None:
+                print("Template caricato dal database")
+            else:
+                print("Nessun template disponibile")
+    
+    # Connessione MQTT (implementazione da completare in seguito)
+    # Per ora MQTT è disabilitato - la classe MQTTClient è uno stub vuoto
+    mqtt_client = None
+    
+    # Carica configurazioni sensori dal database
+    sensor_configs = []
+    if mongo_client is not None:
+        try:
+            sensor_configs = mongo_client.get_all_sensor_configs()
+            print(f"Caricate {len(sensor_configs)} configurazioni sensori dal database")
+        except Exception as e:
+            print(f"Avviso: Errore nel caricamento dei sensori dal database: {e}")
+    
+    # Crea sensori
+    sensors = SensorFactory.create_sensors_from_configs(sensor_configs)
+    print(f"Creati {len(sensors)} sensori")
+    
+    # Crea business logic
+    business_logic = BusinessLogic(
+        sensors=sensors,
+        mongo_client=mongo_client,
+        mqtt_client=mqtt_client
+    )
+    
+    # Aggiorna le variabili globali in dependencies
+    dependencies.business_logic = business_logic
+    dependencies.mongo_client = mongo_client
+    
+    # Connetti tutti i sensori
+    connection_results = await business_logic.connect_all_sensors()
+    connected_count = sum(1 for v in connection_results.values() if v)
+    print(f"Connessi {connected_count}/{len(connection_results)} sensori")
+    
+    # Avvia polling
+    await business_logic.start_polling()
+    
+    print("Applicazione avviata con successo!")
+    
+    yield
+    
+    # Shutdown
+    print("Arresto applicazione...")
+    
+    # Ferma polling
+    if business_logic is not None:
+        await business_logic.stop_polling()
+        await business_logic.disconnect_all_sensors()
+    
+    # Disconnette MQTT
+    if mqtt_client is not None:
+        await mqtt_client.disconnect()
+    
+    # Disconnette MongoDB
+    if mongo_client is not None:
+        mongo_client.disconnect()
+    
+    print("Applicazione arrestata")
+
+
+# Crea app FastAPI
+app = FastAPI(
+    title="Smart Home Backend",
+    description="Backend modulare per gestione sensori smart home",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Configurazione CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Le dipendenze sono ora in app.dependencies per evitare importazioni circolari
+
+
+# Include routers
+app.include_router(sensors.router)
+app.include_router(frontend.router)
+
+
+@app.get("/")
+async def root():
+    """Endpoint root"""
+    return {
+        "message": "Smart Home Backend API",
+        "version": "1.0.0",
+        "status": "running"
+    }
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    mongo_connected = False
+    if dependencies.mongo_client is not None:
+        mongo_connected = dependencies.mongo_client.db is not None
+    
+    mqtt_connected = False
+    if mqtt_client is not None:
+        mqtt_connected = mqtt_client.connected
+    
+    sensors_count = 0
+    if dependencies.business_logic is not None:
+        sensors_count = len(dependencies.business_logic.sensors)
+    
+    return {
+        "status": "healthy",
+        "mongo_connected": mongo_connected,
+        "mqtt_connected": mqtt_connected,
+        "sensors_count": sensors_count
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
