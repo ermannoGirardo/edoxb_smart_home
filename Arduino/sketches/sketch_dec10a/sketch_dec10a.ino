@@ -1,8 +1,8 @@
 #include <WiFiS3.h>
 
 // Credenziali WiFi
-char ssid[] = "CasaLavagnola1";
-char pass[] = "Marcello1963*";
+char ssid[] = "";
+char pass[] = "*";
 
 // Parametri server
 const char* host = "192.168.178.81";
