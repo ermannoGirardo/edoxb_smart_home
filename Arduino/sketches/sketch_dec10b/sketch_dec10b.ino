@@ -1,147 +1,74 @@
 #include <WiFiS3.h>
+#include <WebSocketsClient.h>
 
-// WiFi
-char ssid[] = "";
-char pass[] = "";
+WebSocketsClient ws;
 
-// SERVER LOCALE (Arduino)
-WiFiServer server(80);
+// Credentials WiFi
+const char ssid[] = "CasaLavagnola1";
+const char pass[] = "Marcello1963*";
 
-// CLIENT (verso tuo backend)
-const char* backendHost = "192.168.178.81";
-const int backendPort = 8000;
+// Server WebSocket REMOTO
+const char* ws_host = "192.168.178.97";   // <--- METTI QUI IP SERVER
+const uint16_t ws_port = 8005;             // <--- METTI QUI PORTA SERVER
+const char* ws_path = "/ws";               // <--- per la maggior parte dei server
 
-// Sensori
-const int sensorPin = 7;
-
-// Attuatore (LUCE)
-const int lucePin = 6;
-
-// Timer invio periodico
 unsigned long lastSend = 0;
-unsigned long sendInterval = 5000;
-
-// WiFi status
-int status = WL_IDLE_STATUS;
 
 void setup() {
-  Serial.begin(115200);
-  delay(1500);
+  Serial.begin(9600);
 
-  pinMode(sensorPin, INPUT_PULLUP);
-
-  pinMode(lucePin, OUTPUT);     // <<< AGGIUNTO
-  digitalWrite(lucePin, LOW);   // luce inizialmente spenta
-
-  // Connessione WiFi
-  Serial.println("Connessione alla rete...");
-  while (status != WL_CONNECTED) {
-    status = WiFi.begin(ssid, pass);
+  // Connect WiFi
+  Serial.println("Connessione WiFi...");
+  while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
     delay(2000);
+    Serial.print(".");
   }
 
-  Serial.println("WiFi connesso!");
-  Serial.print("IP: ");
+  Serial.println();
+  Serial.print("Connesso. IP Arduino: ");
   Serial.println(WiFi.localIP());
 
-  server.begin();
-  Serial.println("Server HTTP avviato sulla porta 80");
-}
+  // Setup WebSocket client
+  ws.begin(ws_host, ws_port, ws_path);
 
-void server_handleRequests() {
-  WiFiClient client = server.available();
-  if (!client) return;
+  ws.onEvent(webSocketEvent);
 
-  Serial.println("Cliente connesso al server locale");
-
-  String req = "";
-  while (client.connected() && client.available()) {
-    char c = client.read();
-    req += c;
-    if (c == '\n') break;
-  }
-
-  Serial.println("Richiesta ricevuta:");
-  Serial.println(req);
-
-  // Estrazione endpoint
-  String path = "";
-  int start = req.indexOf(' ') + 1;
-  int end   = req.indexOf(' ', start);
-  if (start > 0 && end > 0) {
-    path = req.substring(start, end);
-  }
-
-  Serial.print("Endpoint richiesto: ");
-  Serial.println(path);
-
-  // SWITCH su endpoint
-  String response;
-
-  if (path == "/accendi") {
-    digitalWrite(lucePin, HIGH);   // <<< ACCENDE LUCE su PIN 6
-    response = "{\"stato\": \"luce accesa\"}";
-  }
-  else if (path == "/spegni") {
-    digitalWrite(lucePin, LOW);    // <<< SPEGNE LUCE su PIN 6
-    response = "{\"stato\": \"luce spenta\"}";
-  }
-  else if (path == "/stato") {
-    int s = digitalRead(sensorPin);
-    response = "{\"sensore\": " + String(s) + "}";
-  }
-  else {
-    response = "{\"errore\": \"endpoint sconosciuto\"}";
-  }
-
-  // Risposta
-  client.println("HTTP/1.1 200 OK");
-  client.println("Content-Type: application/json");
-  client.println("Connection: close");
-  client.println();
-  client.print(response);
-
-  client.stop();
-  Serial.println("Cliente disconnesso\n");
-}
-
-void client_sendSensorStatus() {
-  if (millis() - lastSend < sendInterval) return;
-  lastSend = millis();
-
-  int valore = digitalRead(sensorPin);
-
-  WiFiClient cli;
-
-  if (!cli.connect(backendHost, backendPort)) {
-    Serial.println("Errore di connessione al backend");
-    return;
-  }
-
-  String url = "/sensori/update";
-  String json = "{\"pin7\": " + String(valore) + "}";
-
-  cli.print("POST " + url + " HTTP/1.1\r\n");
-  cli.print("Host: " + String(backendHost) + "\r\n");
-  cli.print("Content-Type: application/json\r\n");
-  cli.print("Content-Length: " + String(json.length()) + "\r\n");
-  cli.print("Connection: close\r\n\r\n");
-  cli.print(json);
-
-  Serial.println("Dati inviati al backend:");
-  Serial.println(json);
-
-  while (cli.connected() || cli.available()) {
-    if (cli.available()) {
-      Serial.print((char)cli.read());
-    }
-  }
-
-  cli.stop();
-  Serial.println("\nInvio completato.\n");
+  // Impostazioni raccomandate
+  ws.setReconnectInterval(5000);   // tenta retry ogni 5s
+  ws.enableHeartbeat(15000, 3000, 2);
 }
 
 void loop() {
-  server_handleRequests();
-  client_sendSensorStatus();
+  ws.loop();
+
+  // invia "ciao" ogni 5 secondi
+  if (millis() - lastSend > 5000) {
+    lastSend = millis();
+
+    Serial.println("Invio: ciao");
+    ws.sendTXT("ciao");
+  }
+}
+
+void webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
+
+  switch (type) {
+
+    case WStype_CONNECTED:
+      Serial.println("WebSocket connesso al server");
+      ws.sendTXT("ciao");   // primo messaggio
+      break;
+
+    case WStype_DISCONNECTED:
+      Serial.println("WebSocket disconnesso");
+      break;
+
+    case WStype_TEXT:
+      Serial.print("Ricevuto: ");
+      Serial.println((char*)payload);
+      break;
+
+    default:
+      break;
+  }
 }
