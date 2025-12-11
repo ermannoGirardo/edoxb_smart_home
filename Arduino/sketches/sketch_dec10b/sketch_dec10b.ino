@@ -1,8 +1,8 @@
 #include <WiFiS3.h>
 
 // WiFi
-char ssid[] = "CasaLavagnola1";
-char pass[] = "Marcello1963*";
+char ssid[] = "";
+char pass[] = "";
 
 // SERVER LOCALE (Arduino)
 WiFiServer server(80);
