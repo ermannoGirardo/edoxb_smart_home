@@ -46,6 +46,7 @@ class SensorStatus(BaseModel):
     connected: bool
     last_update: Optional[datetime]
     enabled: bool
+    actions: Optional[Dict[str, str]] = Field(default_factory=dict, description="Azioni disponibili per il sensore")
 
 
 class SensorListResponse(BaseModel):

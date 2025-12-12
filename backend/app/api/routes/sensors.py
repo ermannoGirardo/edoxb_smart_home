@@ -13,7 +13,7 @@ async def list_sensors(
     business_logic: BusinessLogic = Depends(get_business_logic)
 ):
     """Restituisce la lista di tutti i sensori con il loro stato"""
-    return business_logic.get_sensor_status()
+    return await business_logic.get_sensor_status()
 
 
 @router.get("/{sensor_name}", response_model=SensorStatus)
@@ -22,7 +22,7 @@ async def get_sensor_status(
     business_logic: BusinessLogic = Depends(get_business_logic)
 ):
     """Restituisce lo stato di un sensore specifico"""
-    status_list = business_logic.get_sensor_status(sensor_name)
+    status_list = await business_logic.get_sensor_status(sensor_name)
     if not status_list:
         raise HTTPException(status_code=404, detail=f"Sensore '{sensor_name}' non trovato")
     return status_list[0]

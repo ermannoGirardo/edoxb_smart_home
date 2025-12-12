@@ -20,16 +20,16 @@ async def get_frontend_data(
         if request.sensor_names:
             # Dati per sensori specifici
             for sensor_name in request.sensor_names:
-                data = mongo_client.get_sensor_data(
+                data = await mongo_client.get_sensor_data(
                     sensor_name=sensor_name,
                     limit=request.limit or 100
                 )
                 sensors_data[sensor_name] = data
         else:
             # Dati per tutti i sensori
-            all_sensors = mongo_client.get_sensors_list()
+            all_sensors = await mongo_client.get_sensors_list()
             for sensor_name in all_sensors:
-                data = mongo_client.get_sensor_data(
+                data = await mongo_client.get_sensor_data(
                     sensor_name=sensor_name,
                     limit=request.limit or 100
                 )
@@ -46,7 +46,7 @@ async def get_available_sensors(
 ):
     """Restituisce la lista di tutti i sensori che hanno inviato dati"""
     try:
-        sensors = mongo_client.get_sensors_list()
+        sensors = await mongo_client.get_sensors_list()
         return {"sensors": sensors}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore nel recupero lista sensori: {str(e)}")
@@ -59,7 +59,7 @@ async def get_latest_sensor_data(
 ):
     """Restituisce l'ultimo dato disponibile per un sensore"""
     try:
-        data = mongo_client.get_latest_sensor_data(sensor_name=sensor_name)
+        data = await mongo_client.get_latest_sensor_data(sensor_name=sensor_name)
         if data is None:
             raise HTTPException(
                 status_code=404,
@@ -81,7 +81,7 @@ async def get_sensor_template(
 ):
     """Restituisce il template dei campi disponibili per configurare un sensore"""
     try:
-        template = mongo_client.get_sensor_template()
+        template = await mongo_client.get_sensor_template()
         if template is None:
             raise HTTPException(
                 status_code=404,

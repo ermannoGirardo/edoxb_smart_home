@@ -1,4 +1,5 @@
 import asyncio
+import aiohttp
 from typing import Dict, List, Optional
 from datetime import datetime
 from app.sensors.sensor_base import SensorBase
@@ -52,7 +53,8 @@ class BusinessLogic:
                 
                 # Salva in MongoDB
                 try:
-                    self.mongo_client.save_sensor_data(sensor_data)
+                    if self.mongo_client is not None:
+                        await self.mongo_client.save_sensor_data(sensor_data)
                 except Exception as e:
                     print(f"Errore salvataggio MongoDB per {name}: {e}")
                 
@@ -92,16 +94,56 @@ class BusinessLogic:
             except Exception as e:
                 print(f"Errore disconnessione sensore {sensor.name}: {e}")
     
-    def get_sensor_status(self, name: Optional[str] = None) -> List[SensorStatus]:
-        """Ottiene lo stato di uno o tutti i sensori"""
+    async def check_sensor_connection(self, sensor: SensorBase) -> bool:
+        """Verifica se un sensore è connesso facendo una richiesta GET a ip/status"""
+        try:
+            # Costruisce l'URL per il check di status
+            protocol = getattr(sensor.config, 'protocol', 'http') or 'http'
+            if protocol not in ['http', 'https']:
+                protocol = 'http'
+            
+            base_url = f"{protocol}://{sensor.ip}"
+            if sensor.port:
+                base_url += f":{sensor.port}"
+            
+            status_url = f"{base_url}/status"
+            
+            # Timeout breve per il check di connessione (2 secondi)
+            timeout = aiohttp.ClientTimeout(total=2)
+            
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(status_url) as response:
+                    # Se otteniamo una risposta (qualsiasi status code), il sensore è raggiungibile
+                    return response.status < 500
+        except Exception as e:
+            # Se c'è un errore (timeout, connessione rifiutata, ecc.), il sensore non è connesso
+            return False
+    
+    async def get_sensor_status(self, name: Optional[str] = None) -> List[SensorStatus]:
+        """Ottiene lo stato di uno o tutti i sensori, verificando la connessione per ognuno"""
         if name:
             if name not in self.sensors:
                 return []
             sensor = self.sensors[name]
+            # Verifica la connessione
+            is_connected = await self.check_sensor_connection(sensor)
             status_dict = sensor.get_status()
+            status_dict['connected'] = is_connected
             return [SensorStatus(**status_dict)]
         else:
-            return [SensorStatus(**sensor.get_status()) for sensor in self.sensors.values()]
+            # Per tutti i sensori, verifica la connessione in parallelo
+            sensors_list = list(self.sensors.values())
+            connection_checks = [self.check_sensor_connection(sensor) for sensor in sensors_list]
+            connection_results = await asyncio.gather(*connection_checks, return_exceptions=True)
+            
+            status_list = []
+            for sensor, is_connected in zip(sensors_list, connection_results):
+                status_dict = sensor.get_status()
+                # Se il check ha generato un'eccezione, considera il sensore come non connesso
+                status_dict['connected'] = is_connected if isinstance(is_connected, bool) else False
+                status_list.append(SensorStatus(**status_dict))
+            
+            return status_list
     
     async def read_sensor_data(self, name: str) -> Optional[SensorData]:
         """Legge i dati da un sensore specifico"""
@@ -150,7 +192,7 @@ class BusinessLogic:
         try:
             # Salva nel database
             if self.mongo_client is not None:
-                self.mongo_client.save_sensor_config(sensor_config)
+                await self.mongo_client.save_sensor_config(sensor_config)
             
             # Crea il sensore
             sensor = SensorFactory.create_sensor(sensor_config)
@@ -191,7 +233,7 @@ class BusinessLogic:
             
             # Rimuove dal database
             if self.mongo_client is not None:
-                self.mongo_client.delete_sensor_config(name)
+                await self.mongo_client.delete_sensor_config(name)
             
             return True
         except Exception as e:

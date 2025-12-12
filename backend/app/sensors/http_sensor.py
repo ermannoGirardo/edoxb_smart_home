@@ -126,6 +126,7 @@ class HTTPSensor(SensorBase):
         
         # Costruisce l'URL completo per l'azione
         full_action_url = f"{self.base_url}{action_url}"
+        print(f"Esecuzione azione '{action_name}' su sensore '{self.name}': GET {full_action_url}")
         
         try:
             if self.session is None or self.session.closed:

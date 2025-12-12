@@ -20,3 +20,4 @@ def get_mongo_client() -> MongoClientWrapper:
         raise RuntimeError("MongoClient non inizializzato")
     return mongo_client
 
+

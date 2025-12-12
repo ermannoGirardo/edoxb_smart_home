@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
     # Connessione MongoDB
     mongo_client = MongoClientWrapper()
     try:
-        mongo_client.connect()
+        await mongo_client.connect()
     except Exception as e:
         print(f"Avviso: Impossibile connettersi a MongoDB: {e}")
         print("L'applicazione continuerà senza MongoDB")
@@ -50,12 +50,12 @@ async def lifespan(app: FastAPI):
             template = config_loader.load_template()
             
             # Salva il template nel DB (sovrascrive se esiste già)
-            mongo_client.save_sensor_template(template)
+            await mongo_client.save_sensor_template(template)
             print("Template sensori caricato e salvato nel database")
         except Exception as e:
             print(f"Avviso: Errore nel caricamento del template: {e}")
             # Prova a caricare il template dal DB se esiste
-            template = mongo_client.get_sensor_template()
+            template = await mongo_client.get_sensor_template()
             if template is not None:
                 print("Template caricato dal database")
             else:
@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI):
     sensor_configs = []
     if mongo_client is not None:
         try:
-            sensor_configs = mongo_client.get_all_sensor_configs()
+            sensor_configs = await mongo_client.get_all_sensor_configs()
             print(f"Caricate {len(sensor_configs)} configurazioni sensori dal database")
         except Exception as e:
             print(f"Avviso: Errore nel caricamento dei sensori dal database: {e}")
@@ -115,7 +115,7 @@ async def lifespan(app: FastAPI):
     
     # Disconnette MongoDB
     if mongo_client is not None:
-        mongo_client.disconnect()
+        await mongo_client.disconnect()
     
     print("Applicazione arrestata")
 

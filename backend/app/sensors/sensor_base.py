@@ -46,7 +46,8 @@ class SensorBase(ABC):
             "port": self.port,
             "connected": self.connected,
             "last_update": self.last_update,
-            "enabled": self._enabled
+            "enabled": self._enabled,
+            "actions": self.config.actions or {}
         }
     
     def enable(self) -> None:

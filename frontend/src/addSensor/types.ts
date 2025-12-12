@@ -15,3 +15,4 @@ export interface SensorTemplate {
   custom_fields: FieldDefinition[]
 }
 
+
