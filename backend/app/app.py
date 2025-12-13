@@ -24,9 +24,6 @@ api_router = APIRouter(prefix="/api")
 def home():
     return {"message": "backend ok"}
 
-@api_router.get("/2")
-def endpoint_2():
-    return {"message": "endpoint 2 funziona", "status": "ok"}
 
 @api_router.get("/users")
 def users():

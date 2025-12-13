@@ -1,0 +1,12 @@
+{
+  "id": "shelly_rgbw2",
+  "name": "Shelly RGBW2",
+  "version": "1.0.0",
+  "description": "Controller LED RGBW con controllo colore e luminosità",
+  "template_id": "shelly_rgbw2",
+  "frontend_component": "ShellyRGBW2Control",
+  "protocol": "http",
+  "required_fields": ["name", "ip"],
+  "optional_fields": []
+}
+

@@ -1,3 +1,8 @@
 fastapi
-uvicorn
-pymongo
+uvicorn[standard]
+motor
+aiohttp
+aiofiles
+websockets
+pyyaml
+# awsiot e awscrt - da aggiungere in seguito per supporto MQTT AWS

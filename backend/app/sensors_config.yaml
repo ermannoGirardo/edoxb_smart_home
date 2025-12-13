@@ -1,0 +1,92 @@
+# Template di configurazione per sensori Smart Home
+# Questo file definisce i campi disponibili per configurare un sensore
+# I sensori effettivi vengono salvati nel database MongoDB
+
+sensor_template:
+  # Campi comuni a tutti i tipi di sensore
+  common_fields:
+    - name: name
+      type: string
+      required: true
+      description: "Nome univoco del sensore"
+      example: "temperatura_sala"
+    
+    - name: type
+      type: enum
+      required: true
+      description: "Tipo di sensore (deprecato, usare protocol)"
+      values: ["http", "websocket"]
+      example: "http"
+    
+    - name: protocol
+      type: enum
+      required: false
+      description: "Protocollo di comunicazione (http, websocket)"
+      values: ["http", "websocket"]
+      example: "http"
+    
+    - name: ip
+      type: string
+      required: true
+      description: "Indirizzo IP del sensore"
+      example: "192.168.1.100"
+    
+    - name: port
+      type: integer
+      required: false
+      description: "Porta del sensore (opzionale, default dipende dal tipo)"
+      example: 8080
+    
+    - name: enabled
+      type: boolean
+      required: false
+      description: "Se il sensore è abilitato"
+      default: true
+      example: true
+    
+    - name: poll_interval
+      type: integer
+      required: false
+      description: "Intervallo di polling in secondi"
+      default: 5
+      example: 5
+    
+    - name: timeout
+      type: integer
+      required: false
+      description: "Timeout in secondi per le richieste"
+      default: 10
+      example: 10
+  
+  # Campi specifici per sensori HTTP
+  http_fields:
+    - name: protocol
+      type: enum
+      required: false
+      description: "Protocollo HTTP (http o https)"
+      values: ["http", "https"]
+      default: "http"
+      example: "http"
+    
+    - name: endpoint
+      type: string
+      required: false
+      description: "Percorso URL per sensori HTTP (es: /api/temperature)"
+      example: "/api/temperature"
+    
+    - name: actions
+      type: object
+      required: false
+      description: "Azioni disponibili per il sensore come dizionario action-URL (es: {'accendi': '/color/0?turn=on', 'spegni': '/color/0?turn=off'})"
+      example:
+        accendi: "/color/0?turn=on"
+        spegni: "/color/0?turn=off"
+  
+  # Campi specifici per sensori WebSocket
+  websocket_fields:
+    - name: path
+      type: string
+      required: false
+      description: "Path WebSocket"
+      example: "/ws/motion"
+

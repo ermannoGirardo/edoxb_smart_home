@@ -1,147 +1,95 @@
 #include <WiFiS3.h>
 
-// WiFi
-char ssid[] = "";
-char pass[] = "";
+// Credenziali WiFi
+char ssid[] = "CasaLavagola1";
+char pass[] = "Marcello1963*";
 
-// SERVER LOCALE (Arduino)
-WiFiServer server(80);
+// Parametri server
+const char* host = "192.168.178.97";
+const int port = 8000;
 
-// CLIENT (verso tuo backend)
-const char* backendHost = "192.168.178.81";
-const int backendPort = 8000;
-
-// Sensori
-const int sensorPin = 7;
-
-// Attuatore (LUCE)
-const int lucePin = 6;
-
-// Timer invio periodico
-unsigned long lastSend = 0;
-unsigned long sendInterval = 5000;
-
-// WiFi status
+// Stato WiFi
 int status = WL_IDLE_STATUS;
 
 void setup() {
   Serial.begin(115200);
-  delay(1500);
+  delay(2000);
 
-  pinMode(sensorPin, INPUT_PULLUP);
-
-  pinMode(lucePin, OUTPUT);     // <<< AGGIUNTO
-  digitalWrite(lucePin, LOW);   // luce inizialmente spenta
+  Serial.println("Inizializzazione WiFi...");
 
   // Connessione WiFi
-  Serial.println("Connessione alla rete...");
   while (status != WL_CONNECTED) {
+    Serial.print("Connessione a: ");
+    Serial.println(ssid);
     status = WiFi.begin(ssid, pass);
-    delay(2000);
+    delay(3000);
   }
 
   Serial.println("WiFi connesso!");
-  Serial.print("IP: ");
+  Serial.print("IP assegnato: ");
   Serial.println(WiFi.localIP());
-
-  server.begin();
-  Serial.println("Server HTTP avviato sulla porta 80");
+  Serial.println("Pronto. Scrivi 'accendi' o 'spegni' nel monitor seriale.");
 }
 
-void server_handleRequests() {
-  WiFiClient client = server.available();
-  if (!client) return;
+void inviaPOST(String comando) {
+  WiFiClient client;
 
-  Serial.println("Cliente connesso al server locale");
+  Serial.println("------------------------------");
+  Serial.print("Connessione a ");
+  Serial.print(host);
+  Serial.print(":");
+  Serial.println(port);
 
-  String req = "";
-  while (client.connected() && client.available()) {
-    char c = client.read();
-    req += c;
-    if (c == '\n') break;
-  }
-
-  Serial.println("Richiesta ricevuta:");
-  Serial.println(req);
-
-  // Estrazione endpoint
-  String path = "";
-  int start = req.indexOf(' ') + 1;
-  int end   = req.indexOf(' ', start);
-  if (start > 0 && end > 0) {
-    path = req.substring(start, end);
-  }
-
-  Serial.print("Endpoint richiesto: ");
-  Serial.println(path);
-
-  // SWITCH su endpoint
-  String response;
-
-  if (path == "/accendi") {
-    digitalWrite(lucePin, HIGH);   // <<< ACCENDE LUCE su PIN 6
-    response = "{\"stato\": \"luce accesa\"}";
-  }
-  else if (path == "/spegni") {
-    digitalWrite(lucePin, LOW);    // <<< SPEGNE LUCE su PIN 6
-    response = "{\"stato\": \"luce spenta\"}";
-  }
-  else if (path == "/stato") {
-    int s = digitalRead(sensorPin);
-    response = "{\"sensore\": " + String(s) + "}";
-  }
-  else {
-    response = "{\"errore\": \"endpoint sconosciuto\"}";
-  }
-
-  // Risposta
-  client.println("HTTP/1.1 200 OK");
-  client.println("Content-Type: application/json");
-  client.println("Connection: close");
-  client.println();
-  client.print(response);
-
-  client.stop();
-  Serial.println("Cliente disconnesso\n");
-}
-
-void client_sendSensorStatus() {
-  if (millis() - lastSend < sendInterval) return;
-  lastSend = millis();
-
-  int valore = digitalRead(sensorPin);
-
-  WiFiClient cli;
-
-  if (!cli.connect(backendHost, backendPort)) {
-    Serial.println("Errore di connessione al backend");
+  if (!client.connect(host, port)) {
+    Serial.println("ERRORE: impossibile connettersi al server");
     return;
   }
 
-  String url = "/sensori/update";
-  String json = "{\"pin7\": " + String(valore) + "}";
+  String url = "/luce/" + comando;
+  String body = "{}";  // Corpo JSON (vuoto se non richiesto)
 
-  cli.print("POST " + url + " HTTP/1.1\r\n");
-  cli.print("Host: " + String(backendHost) + "\r\n");
-  cli.print("Content-Type: application/json\r\n");
-  cli.print("Content-Length: " + String(json.length()) + "\r\n");
-  cli.print("Connection: close\r\n\r\n");
-  cli.print(json);
+  Serial.print("Invio POST a ");
+  Serial.println(url);
 
-  Serial.println("Dati inviati al backend:");
-  Serial.println(json);
+  // Header HTTP
+  client.print("POST " + url + " HTTP/1.1\r\n");
+  client.print("Host: " + String(host) + "\r\n");
+  client.print("Content-Type: application/json\r\n");
+  client.print("Content-Length: " + String(body.length()) + "\r\n");
+  client.print("Connection: close\r\n\r\n");
 
-  while (cli.connected() || cli.available()) {
-    if (cli.available()) {
-      Serial.print((char)cli.read());
+  // Corpo della richiesta
+  client.print(body);
+
+  Serial.println("Richiesta inviata. In attesa della risposta...\n");
+
+  // Lettura risposta server
+  while (client.connected() || client.available()) {
+    if (client.available()) {
+      String line = client.readStringUntil('\n');
+      Serial.println(line);
     }
   }
 
-  cli.stop();
-  Serial.println("\nInvio completato.\n");
+  client.stop();
+  Serial.println("Richiesta completata!");
+  Serial.println("------------------------------\n");
 }
 
 void loop() {
-  server_handleRequests();
-  client_sendSensorStatus();
+  // Se arriva un comando dal monitor seriale...
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+
+    if (cmd == "accendi") {
+      inviaPOST("accendi");
+    } 
+    else if (cmd == "spegni") {
+      inviaPOST("spegni");
+    } 
+    else {
+      Serial.println("Comando non valido. Usa: accendi | spegni");
+    }
+  }
 }
