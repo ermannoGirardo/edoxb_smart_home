@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 motor
 aiohttp
+aiofiles
 websockets
 pyyaml
 aiomqtt

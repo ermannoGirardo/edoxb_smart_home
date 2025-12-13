@@ -6,6 +6,7 @@ Ottimizzato per zero overhead a runtime
 import os
 import json
 import aiohttp
+import aiofiles
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import importlib.util
@@ -74,7 +75,8 @@ class PluginLoader:
                             if len(content) == 0:
                                 print(f"⚠ Metadata scaricato ma vuoto per {sensor_id}")
                             else:
-                                metadata_path.write_bytes(content)
+                                async with aiofiles.open(metadata_path, 'wb') as f:
+                                    await f.write(content)
                                 print(f"✓ Scaricato metadata per {sensor_id} ({len(content)} bytes)")
                                 metadata_downloaded = True
                         else:
@@ -90,7 +92,8 @@ class PluginLoader:
                         async with session.get(backend_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                             if response.status == 200:
                                 content = await response.read()
-                                backend_path.write_bytes(content)
+                                async with aiofiles.open(backend_path, 'wb') as f:
+                                    await f.write(content)
                                 print(f"✓ Scaricato backend route per {sensor_id}")
                             else:
                                 print(f"⚠ Backend route non trovato per {sensor_id}: HTTP {response.status} (può essere normale per sensori MQTT puri)")
