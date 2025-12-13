@@ -73,9 +73,12 @@ class SensorBase(ABC):
         if self._protocol and hasattr(self._protocol, 'port') and self._protocol.port:
             port = self._protocol.port
         
+        # Ottieni il tipo di sensore (usa protocol se type è None)
+        sensor_type = self.type.value if self.type else self.config.get_communication_protocol()
+        
         status = {
             "name": self.name,
-            "type": self.type.value,
+            "type": sensor_type,
             "ip": self.ip,
             "port": port,
             "connected": self.connected,
@@ -91,9 +94,9 @@ class SensorBase(ABC):
             status["protocol"] = protocol_name.replace("Protocol", "").lower()
         else:
             # Retrocompatibilità: deduci dal tipo
-            if self.type.value == "http":
+            if sensor_type == "http":
                 status["protocol"] = "http"
-            elif self.type.value == "websocket":
+            elif sensor_type == "websocket":
                 status["protocol"] = "websocket"
         return status
     

@@ -49,10 +49,61 @@ async def read_sensor_data(
 ):
     """Legge i dati da un sensore specifico"""
     sensor_data = await business_logic.read_sensor_data(sensor_name)
+    
     if sensor_data is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Sensore '{sensor_name}' non trovato o disabilitato"
+        # Verifica se il sensore esiste almeno (anche se disabilitato o senza dati)
+        status_list = await business_logic.get_sensor_status(sensor_name, check_connection=False)
+        
+        # Se il sensore non è in memoria, prova a caricarlo dal database
+        if not status_list:
+            # Prova a caricare il sensore dal database se esiste
+            try:
+                from app.models import SensorConfig
+                # Accedi a mongo_client tramite business_logic
+                if hasattr(business_logic, '_management_service') and hasattr(business_logic._management_service, 'mongo_client'):
+                    mongo_client = business_logic._management_service.mongo_client
+                    if mongo_client is not None and mongo_client.db is not None:
+                        # Prova a caricare la configurazione dal database
+                        config_dict = await mongo_client.db.sensor_configs.find_one({"name": sensor_name})
+                        if config_dict:
+                            # Rimuovi _id per creare SensorConfig
+                            config_dict.pop("_id", None)
+                            sensor_config = SensorConfig(**config_dict)
+                            
+                            # Aggiungi il sensore alla business logic
+                            success = await business_logic.add_sensor(sensor_config)
+                            if success:
+                                # Riprova a leggere i dati
+                                sensor_data = await business_logic.read_sensor_data(sensor_name)
+                                if sensor_data is not None:
+                                    return SensorDataResponse(
+                                        sensor_name=sensor_data.sensor_name,
+                                        data=sensor_data.data,
+                                        timestamp=sensor_data.timestamp,
+                                        status=sensor_data.status
+                                    )
+                                # Se il sensore è stato caricato ma non ha dati, aggiorna status_list
+                                status_list = await business_logic.get_sensor_status(sensor_name, check_connection=False)
+            except Exception as e:
+                print(f"Errore caricamento sensore {sensor_name} dal database: {e}")
+        
+        # Se ancora non esiste, restituisci 404
+        if not status_list:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Sensore '{sensor_name}' non trovato"
+            )
+        
+        # Se il sensore esiste ma non ha dati (es. MQTT senza messaggi ancora),
+        # restituisci una risposta vuota invece di 404
+        from app.models import SensorData
+        from datetime import datetime
+        sensor_data = SensorData(
+            sensor_name=sensor_name,
+            timestamp=datetime.now(),
+            data={},
+            status="ok",
+            error="Nessun dato disponibile ancora"
         )
     
     return SensorDataResponse(

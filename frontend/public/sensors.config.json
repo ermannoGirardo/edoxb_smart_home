@@ -1,5 +1,5 @@
 {
-  "enabled_sensors": ["shelly_rgbw2", "shelly_dimmer2", "arduino_websocket"],
+  "enabled_sensors": ["shelly_rgbw2", "shelly_dimmer2", "arduino_websocket", "shelly_ht"],
   "sensors": {
     "shelly_rgbw2": {
       "component": "ShellyRGBW2Control",
@@ -12,6 +12,10 @@
     "arduino_websocket": {
       "component": "ArduinoWebSocketControl",
       "template_id": "arduino_websocket"
+    },
+    "shelly_ht": {
+      "component": "ShellyHT",
+      "template_id": "shelly_ht"
     }
   }
 }

@@ -72,6 +72,31 @@ async def lifespan(app: FastAPI):
     # Registra i protocolli disponibili
     ProtocolRegistry.register_protocol("http", HTTPProtocol)
     ProtocolRegistry.register_protocol("websocket", WebSocketProtocol)
+    
+    # Registra protocollo MQTT se disponibile
+    try:
+        from app.protocols.mqtt_protocol import MQTTProtocol
+        from aiomqtt import Client as AioMQTTClient
+        
+        # Inizializza client MQTT condiviso per broker locale
+        mqtt_broker_host = os.getenv("MQTT_BROKER_HOST", "mosquitto")
+        mqtt_broker_port = int(os.getenv("MQTT_BROKER_PORT", "1883"))
+        
+        try:
+            mqtt_client_shared = AioMQTTClient(
+                hostname=mqtt_broker_host,
+                port=mqtt_broker_port
+            )
+            # Il client verrà aperto quando necessario (lazy connection)
+            MQTTProtocol.set_mqtt_client(mqtt_client_shared)
+            ProtocolRegistry.register_protocol("mqtt", MQTTProtocol)
+            print(f"✓ Protocollo MQTT registrato (broker: {mqtt_broker_host}:{mqtt_broker_port})")
+        except Exception as e:
+            print(f"⚠ Avviso: Impossibile inizializzare MQTT (broker non disponibile?): {e}")
+            print("   I sensori MQTT non saranno disponibili")
+    except ImportError:
+        print("⚠ Avviso: aiomqtt non installato, protocollo MQTT non disponibile")
+    
     print(f"Protocolli registrati: {ProtocolRegistry.list_protocols()}")
     
     # Carica configurazioni sensori dal database
@@ -93,6 +118,23 @@ async def lifespan(app: FastAPI):
         mongo_client=mongo_client,
         mqtt_client=mqtt_client
     )
+    
+    # Crea AutomationService
+    from app.services.automation_service import AutomationService
+    automation_service = AutomationService(business_logic)
+    
+    # Collega AutomationService al polling service
+    business_logic._polling_service._automation_service = automation_service
+    
+    # Collega AutomationService e MongoDB ai protocolli MQTT e WebSocket
+    try:
+        from app.protocols.mqtt_protocol import MQTTProtocol
+        MQTTProtocol._automation_service = automation_service
+        MQTTProtocol._mongo_client = mongo_client  # Per salvare dati immediatamente
+    except:
+        pass
+    # WebSocketProtocol è già importato globalmente, non serve re-importarlo
+    WebSocketProtocol._automation_service = automation_service
     
     # Aggiorna le variabili globali in dependencies
     dependencies.business_logic = business_logic

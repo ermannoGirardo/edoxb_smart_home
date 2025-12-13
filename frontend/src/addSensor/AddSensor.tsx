@@ -126,6 +126,7 @@ export default function AddSensor({ onCancel, onSuccess }: AddSensorProps) {
       const initialData: Record<string, any> = {
         ...templateConfig.default_config,
         type: templateConfig.protocol,
+        protocol: templateConfig.protocol,  // Assicura che protocol sia impostato
         template_id: templateId  // Salva l'ID del template
       }
       setFormData(initialData)
@@ -516,6 +517,12 @@ export default function AddSensor({ onCancel, onSuccess }: AddSensorProps) {
         delete dataToSubmit.timeout
       }
       
+      // Per protocolli MQTT, rimuovi 'type' perché l'enum SensorType non supporta MQTT
+      // Il backend userà solo 'protocol' per determinare il tipo
+      if (dataToSubmit.protocol === 'mqtt') {
+        delete dataToSubmit.type
+      }
+      
       // Pulisci le actions: rimuovi quelle con nomi vuoti
       if (dataToSubmit.actions) {
         const cleanedActions: Record<string, string> = {}
@@ -602,78 +609,64 @@ export default function AddSensor({ onCancel, onSuccess }: AddSensorProps) {
   const renderTemplateForm = () => {
     if (!selectedTemplate) return null
 
+    // Mappa dei label per i campi comuni
+    const fieldLabels: Record<string, string> = {
+      name: 'Nome Sensore',
+      ip: 'Indirizzo IP',
+      device_id: 'ID Dispositivo',
+      port: 'Porta',
+      endpoint: 'Endpoint',
+      path: 'Path WebSocket'
+    }
+
+    // Mappa dei placeholder per i campi comuni
+    const fieldPlaceholders: Record<string, string> = {
+      name: 'es: shelly_rgbw2_01',
+      ip: 'es: 192.168.1.50',
+      device_id: 'es: ABC123',
+      port: 'es: 8080',
+      endpoint: 'es: /api/temperature',
+      path: 'es: /ws'
+    }
+
     return (
       <div className="space-y-5">
-        {/* Campo Nome */}
-        <div className="p-4 rounded-lg border-2" style={{ 
-          borderColor: '#8F0177',
-          background: 'linear-gradient(135deg, rgba(143, 1, 119, 0.3), rgba(54, 1, 133, 0.2))'
-        }}>
-          <label htmlFor="name" className="block mb-2 text-sm font-semibold" style={{ color: '#F4B342' }}>
-            Nome Sensore <span className="ml-1" style={{ color: '#DE1A58' }}>*</span>
-          </label>
-          <input
-            id="name"
-            type="text"
-            value={formData.name || ''}
-            onChange={(e) => handleFieldChange('name', e.target.value)}
-            required
-            placeholder="es: shelly_rgbw2_01"
-            className="text-sm rounded-lg block w-full px-3 py-2.5 shadow-sm transition-colors border-2"
-            style={{ 
-              borderColor: '#8F0177',
-              backgroundColor: 'rgba(54, 1, 133, 0.4)',
-              color: '#FFFFFF',
-              outline: 'none'
-            }}
-            onFocus={(e) => {
-              e.target.style.borderColor = '#F4B342'
-              e.target.style.boxShadow = '0 0 0 3px rgba(244, 179, 66, 0.3)'
-              e.target.style.backgroundColor = 'rgba(54, 1, 133, 0.6)'
-            }}
-            onBlur={(e) => {
-              e.target.style.borderColor = '#8F0177'
-              e.target.style.boxShadow = 'none'
-              e.target.style.backgroundColor = 'rgba(54, 1, 133, 0.4)'
-            }}
-          />
-        </div>
-
-        {/* Campo IP */}
-        <div className="p-4 rounded-lg border-2" style={{ 
-          borderColor: '#8F0177',
-          background: 'linear-gradient(135deg, rgba(143, 1, 119, 0.3), rgba(54, 1, 133, 0.2))'
-        }}>
-          <label htmlFor="ip" className="block mb-2 text-sm font-semibold" style={{ color: '#F4B342' }}>
-            Indirizzo IP <span className="ml-1" style={{ color: '#DE1A58' }}>*</span>
-          </label>
-          <input
-            id="ip"
-            type="text"
-            value={formData.ip || ''}
-            onChange={(e) => handleFieldChange('ip', e.target.value)}
-            required
-            placeholder="es: 192.168.1.50"
-            className="text-sm rounded-lg block w-full px-3 py-2.5 shadow-sm transition-colors border-2"
-            style={{ 
-              borderColor: '#8F0177',
-              backgroundColor: 'rgba(54, 1, 133, 0.4)',
-              color: '#FFFFFF',
-              outline: 'none'
-            }}
-            onFocus={(e) => {
-              e.target.style.borderColor = '#F4B342'
-              e.target.style.boxShadow = '0 0 0 3px rgba(244, 179, 66, 0.3)'
-              e.target.style.backgroundColor = 'rgba(54, 1, 133, 0.6)'
-            }}
-            onBlur={(e) => {
-              e.target.style.borderColor = '#8F0177'
-              e.target.style.boxShadow = 'none'
-              e.target.style.backgroundColor = 'rgba(54, 1, 133, 0.4)'
-            }}
-          />
-        </div>
-
+        {/* Renderizza dinamicamente i campi richiesti dal template */}
+        {selectedTemplate.required_fields.map((fieldName) => (
+          <div key={fieldName} className="p-4 rounded-lg border-2" style={{ 
+            borderColor: '#8F0177',
+            background: 'linear-gradient(135deg, rgba(143, 1, 119, 0.3), rgba(54, 1, 133, 0.2))'
+          }}>
+            <label htmlFor={fieldName} className="block mb-2 text-sm font-semibold" style={{ color: '#F4B342' }}>
+              {fieldLabels[fieldName] || fieldName} <span className="ml-1" style={{ color: '#DE1A58' }}>*</span>
+            </label>
+            <input
+              id={fieldName}
+              type="text"
+              value={formData[fieldName] || ''}
+              onChange={(e) => handleFieldChange(fieldName, e.target.value)}
+              required
+              placeholder={fieldPlaceholders[fieldName] || ''}
+              className="text-sm rounded-lg block w-full px-3 py-2.5 shadow-sm transition-colors border-2"
+              style={{ 
+                borderColor: '#8F0177',
+                backgroundColor: 'rgba(54, 1, 133, 0.4)',
+                color: '#FFFFFF',
+                outline: 'none'
+              }}
+              onFocus={(e) => {
+                e.target.style.borderColor = '#F4B342'
+                e.target.style.boxShadow = '0 0 0 3px rgba(244, 179, 66, 0.3)'
+                e.target.style.backgroundColor = 'rgba(54, 1, 133, 0.6)'
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = '#8F0177'
+                e.target.style.boxShadow = 'none'
+                e.target.style.backgroundColor = 'rgba(54, 1, 133, 0.4)'
+              }}
+            />
+          </div>
+        ))}
       </div>
     )
   }

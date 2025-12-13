@@ -173,6 +173,19 @@ class WebSocketProtocol(ProtocolBase):
                     self._last_data = data
                     self.update_last_update()
                     print(f"Dati ricevuti dal sensore {self.name}: {data}")
+                    
+                    # Notifica AutomationService se presente
+                    sensor_data = SensorData(
+                        sensor_name=self.name,
+                        timestamp=datetime.now(),
+                        data=data,
+                        status="ok"
+                    )
+                    if hasattr(self, '_automation_service') and self._automation_service:
+                        try:
+                            await self._automation_service.on_sensor_data(self.name, sensor_data)
+                        except Exception as e:
+                            print(f"Errore automazione WebSocket per {self.name}: {e}")
                 except json.JSONDecodeError as e:
                     print(f"Errore parsing JSON dal sensore {self.name}: {e}")
                 except Exception as e:
