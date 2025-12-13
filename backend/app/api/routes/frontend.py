@@ -219,7 +219,7 @@ async def get_sketch(protocol: str, sketch_id: str):
         sketch_file = sketches_dir / f"{sketch_id}.py"
     else:
         # È nella cartella principale
-    sketch_file = sketches_dir / f"{sketch_id}.py"
+        sketch_file = sketches_dir / f"{sketch_id}.py"
     
     if not sketch_file.exists():
         raise HTTPException(
