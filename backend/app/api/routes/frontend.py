@@ -167,8 +167,8 @@ def _list_sketches_for_protocol(protocol: str) -> List[Dict[str, Any]]:
                     "name": desc["name"],
                     "description": desc["description"],
                     "filename": str(file_path),
-                    "protocol": protocol
-                })
+            "protocol": protocol
+        })
     
     return sketches
 
@@ -219,7 +219,7 @@ async def get_sketch(protocol: str, sketch_id: str):
         sketch_file = sketches_dir / f"{sketch_id}.py"
     else:
         # È nella cartella principale
-        sketch_file = sketches_dir / f"{sketch_id}.py"
+    sketch_file = sketches_dir / f"{sketch_id}.py"
     
     if not sketch_file.exists():
         raise HTTPException(

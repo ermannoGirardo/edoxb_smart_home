@@ -15,3 +15,6 @@ backend/app/sketches/**/*.py
 
 # File generati automaticamente
 .env.sensors
+
+# Componenti sensori scaricati automaticamente dai plugin GitHub
+frontend/src/sensorCard/*.tsx

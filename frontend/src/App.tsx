@@ -29,33 +29,74 @@ function App() {
   const [sensors, setSensors] = useState<SensorStatus[]>([])
   const [isLoadingSensors, setIsLoadingSensors] = useState(false)
   const [sensorsError, setSensorsError] = useState<string | null>(null)
-  const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({})
   const [deletingSensor, setDeletingSensor] = useState<string | null>(null)
   const [sensorsConfigLoaded, setSensorsConfigLoaded] = useState(false)
+  const [fullscreenSensor, setFullscreenSensor] = useState<string | null>(null)
 
   // Carica configurazione sensori all'avvio
   useEffect(() => {
     fetch('/sensors.config.json')
       .then(res => res.json())
       .then(config => {
-        // Lazy load solo i componenti abilitati
+        console.log('📋 Configurazione sensori caricata:', config)
+        
+        // Usa import.meta.glob per pre-caricare tutti i componenti disponibili (Vite lo risolve a build time)
+        const componentModules = import.meta.glob('./sensorCard/*.tsx', { eager: false }) as Record<string, () => Promise<{ default: ComponentType<SensorControlProps> }>>
+        
+        // Lazy load solo i componenti abilitati - OTTIMIZZATO: carica solo il componente necessario
         config.enabled_sensors?.forEach((sensorId: string) => {
           const componentName = config.sensors?.[sensorId]?.component
           if (componentName) {
-            sensorComponents[sensorId] = lazy(() => 
-              import(`./sensorCard/${componentName}`).catch(() => {
-                console.warn(`Componente ${componentName} non trovato`)
-                // Restituisce un componente vuoto con il tipo corretto
-                return { 
-                  default: (() => null) as ComponentType<SensorControlProps>
-                }
-              })
-            )
+            console.log(`📥 Registrazione componente ${componentName} per sensore ${sensorId}`)
+            
+            // Trova il path del componente nel glob
+            const componentPath = `./sensorCard/${componentName}.tsx`
+            const moduleLoader = componentModules[componentPath]
+            
+            if (moduleLoader) {
+              // Carica solo il componente specifico quando serve (code splitting ottimizzato)
+              sensorComponents[sensorId] = lazy(() => 
+                moduleLoader()
+                  .then(module => {
+                    console.log(`✓ Componente ${componentName} caricato con successo`)
+                    return module as { default: ComponentType<SensorControlProps> }
+                  })
+                  .catch((error) => {
+                    console.error(`✗ Errore caricamento componente ${componentName}:`, error)
+                    // Restituisce un componente che mostra un messaggio di errore
+                    const ErrorComponent: ComponentType<SensorControlProps> = ({ sensorName }: SensorControlProps) => (
+                      <div style={{ 
+                        padding: '2rem', 
+                        textAlign: 'center', 
+                        color: '#F4B342' 
+                      }}>
+                        <h2>Errore caricamento componente</h2>
+                        <p>Il componente {componentName} non è stato trovato o ha un errore.</p>
+                        <p style={{ fontSize: '0.9rem', marginTop: '1rem' }}>
+                          Sensore: {sensorName}
+                        </p>
+                        <p style={{ fontSize: '0.8rem', marginTop: '0.5rem', color: '#999' }}>
+                          Verifica che il file esista in frontend/src/sensorCard/
+                        </p>
+                      </div>
+                    )
+                    return { 
+                      default: ErrorComponent
+                    }
+                  })
+              )
+            } else {
+              console.warn(`⚠ Componente ${componentName} non trovato nel glob (path: ${componentPath})`)
+            }
+          } else {
+            console.warn(`⚠ Sensore ${sensorId} senza componente specificato`)
           }
         })
+        console.log('📦 Componenti registrati:', Object.keys(sensorComponents))
         setSensorsConfigLoaded(true)
       })
-      .catch(() => {
+      .catch((error) => {
+        console.error('❌ Errore caricamento configurazione sensori:', error)
         console.warn('Configurazione sensori non trovata, nessun sensore custom caricato')
         setSensorsConfigLoaded(true)
       })
@@ -113,23 +154,6 @@ function App() {
     return <PinModal onAuthenticated={() => setIsAuthenticated(true)} />
   }
 
-  const formatDate = (dateString: string | null) => {
-    if (!dateString) return 'Mai'
-    try {
-      const date = new Date(dateString)
-      return new Intl.DateTimeFormat('it-IT', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-      }).format(date)
-    } catch {
-      return dateString
-    }
-  }
-
   const handleDeleteSensor = async (sensorName: string) => {
     // Conferma prima di eliminare
     if (!confirm(`Sei sicuro di voler eliminare il sensore "${sensorName}"?`)) {
@@ -163,80 +187,6 @@ function App() {
     }
   }
 
-  const handleActionClick = async (sensorName: string, actionName: string) => {
-    const actionKey = `${sensorName}-${actionName}`
-    setActionLoading(prev => ({ ...prev, [actionKey]: true }))
-    
-    try {
-      const response = await fetch(`http://localhost:8000/sensors/${sensorName}/actions/${actionName}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      })
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: `Errore HTTP: ${response.status}` }))
-        throw new Error(errorData.detail || errorData.message || `Errore HTTP: ${response.status}`)
-      }
-      
-      const result = await response.json()
-      console.log('Azione eseguita con successo:', result)
-      
-      // Mostra notifica di successo
-      const successNotification = document.createElement('div')
-      successNotification.className = 'fixed top-20 right-4 z-50 max-w-md animate-slide-in'
-      successNotification.innerHTML = `
-        <div class="bg-white/95 backdrop-blur-md rounded-lg shadow-2xl p-4 border-l-4" style="border-left-color: #F4B342; box-shadow: 0 10px 40px rgba(244, 179, 66, 0.3);">
-          <div class="flex items-start">
-            <div class="flex-shrink-0">
-              <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20" style="color: #F4B342;">
-                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-              </svg>
-            </div>
-            <div class="ml-3">
-              <p class="text-sm font-semibold" style="color: #F4B342;">Azione eseguita!</p>
-              <p class="text-sm mt-1" style="color: #360185;">${actionName} su ${sensorName}</p>
-            </div>
-          </div>
-        </div>
-      `
-      document.body.appendChild(successNotification)
-      
-      setTimeout(() => {
-        successNotification.remove()
-      }, 3000)
-      
-    } catch (error) {
-      console.error('Errore durante l\'esecuzione dell\'azione:', error)
-      
-      // Mostra notifica di errore
-      const errorNotification = document.createElement('div')
-      errorNotification.className = 'fixed top-20 right-4 z-50 max-w-md animate-slide-in'
-      errorNotification.innerHTML = `
-        <div class="bg-white/95 backdrop-blur-md rounded-lg shadow-2xl p-4 border-l-4" style="border-left-color: #DE1A58; box-shadow: 0 10px 40px rgba(222, 26, 88, 0.3);">
-          <div class="flex items-start">
-            <div class="flex-shrink-0">
-              <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20" style="color: #DE1A58;">
-                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
-              </svg>
-            </div>
-            <div class="ml-3">
-              <p class="text-sm font-semibold" style="color: #DE1A58;">Errore</p>
-              <p class="text-sm mt-1" style="color: #8F0177;">${error instanceof Error ? error.message : 'Errore sconosciuto'}</p>
-            </div>
-          </div>
-        </div>
-      `
-      document.body.appendChild(errorNotification)
-      
-      setTimeout(() => {
-        errorNotification.remove()
-      }, 3000)
-    } finally {
-      setActionLoading(prev => ({ ...prev, [actionKey]: false }))
-    }
-  }
 
   return (
     <div className="fixed inset-0 min-h-screen">
@@ -314,175 +264,106 @@ function App() {
                 {sensors.map((sensor, index) => (
                   <div
                     key={sensor.name}
-                    className="backdrop-blur-lg rounded-lg shadow-xl p-3 hover:shadow-lg transition-shadow duration-150 border-2"
+                    onClick={() => {
+                      // Se il sensore ha un template_id, apri fullscreen
+                      if (sensor.template_id && sensorComponents[sensor.template_id]) {
+                        setFullscreenSensor(sensor.name)
+                      }
+                    }}
+                    className="backdrop-blur-lg rounded-lg shadow-xl p-4 hover:shadow-lg transition-all duration-150 border-2"
                     style={{ 
                       background: 'linear-gradient(135deg, rgba(54, 1, 133, 0.85), rgba(143, 1, 119, 0.8))',
                       borderColor: '#F4B342',
-                      boxShadow: '0 10px 40px rgba(0, 0, 0, 0.4), 0 0 20px rgba(244, 179, 66, 0.2)',
-                      animation: `fadeInUp 0.5s ease-out ${index * 0.1}s both`
+                      boxShadow: '0 10px 40px rgba(0, 0, 0, 0.4)',
+                      animation: `fadeInUp 0.5s ease-out ${index * 0.1}s both`,
+                      cursor: sensor.template_id && sensorComponents[sensor.template_id] ? 'pointer' : 'default'
                     }}
                   >
-                    <div className="flex justify-between items-start mb-2">
-                      <h3 className="text-lg font-bold leading-tight" style={{ color: '#FFFFFF', textShadow: '0 2px 4px rgba(0, 0, 0, 0.3)' }}>{sensor.name}</h3>
-                      <div className="flex flex-col gap-1">
-                        <span
-                          className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold border"
-                          style={{
-                            backgroundColor: sensor.enabled ? 'rgba(244, 179, 66, 0.3)' : 'rgba(143, 1, 119, 0.3)',
-                            color: sensor.enabled ? '#F4B342' : '#FFFFFF',
-                            borderColor: sensor.enabled ? '#F4B342' : '#8F0177'
-                          }}
-                        >
-                          {sensor.enabled ? 'ON' : 'OFF'}
-                        </span>
-                        <span
-                          className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold border"
-                          style={{
-                            backgroundColor: sensor.connected ? 'rgba(222, 26, 88, 0.3)' : 'rgba(143, 1, 119, 0.3)',
-                            color: sensor.connected ? '#DE1A58' : '#FFFFFF',
-                            borderColor: sensor.connected ? '#DE1A58' : '#8F0177'
-                          }}
-                        >
-                          {sensor.connected ? '✓' : '✗'}
-                        </span>
-                      </div>
+                    {/* Nome */}
+                    <h3 className="text-lg font-bold mb-3" style={{ color: '#FFFFFF', textShadow: '0 2px 4px rgba(0, 0, 0, 0.3)' }}>
+                      {sensor.name}
+                    </h3>
+
+                    {/* Tipo - mostra template_id se disponibile, altrimenti type */}
+                    <div className="mb-2">
+                      <span className="text-xs" style={{ color: '#F4B342' }}>Tipo:</span>
+                      <span className="ml-2 font-semibold" style={{ color: '#FFFFFF' }}>
+                        {sensor.template_id 
+                          ? sensor.template_id
+                              .split('_')
+                              .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                              .join(' ')
+                          : sensor.type.toUpperCase()}
+                      </span>
                     </div>
 
-                    {/* Pulsante Elimina */}
+                    {/* IP */}
                     <div className="mb-2">
-                      <button
-                        onClick={() => handleDeleteSensor(sensor.name)}
-                        disabled={deletingSensor === sensor.name}
-                        className="w-full px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed border-2"
-                        style={{
-                          background: deletingSensor === sensor.name
-                            ? 'linear-gradient(135deg, #8F0177, #360185)'
-                            : 'linear-gradient(135deg, #DE1A58, #8F0177)',
-                          borderColor: '#DE1A58',
-                          color: '#FFFFFF'
-                        }}
-                        onMouseEnter={(e) => {
-                          if (deletingSensor !== sensor.name) {
-                            e.currentTarget.style.background = 'linear-gradient(135deg, #8F0177, #DE1A58)'
-                            e.currentTarget.style.boxShadow = '0 2px 8px rgba(222, 26, 88, 0.4)'
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (deletingSensor !== sensor.name) {
-                            e.currentTarget.style.background = 'linear-gradient(135deg, #DE1A58, #8F0177)'
-                            e.currentTarget.style.boxShadow = 'none'
-                          }
+                      <span className="text-xs" style={{ color: '#F4B342' }}>IP:</span>
+                      <span className="ml-2 font-mono text-xs" style={{ color: '#FFFFFF' }}>
+                        {sensor.ip}
+                      </span>
+                    </div>
+
+                    {/* Stato Connessione */}
+                    <div className="flex items-center justify-between mt-3 pt-2 border-t" style={{ borderColor: 'rgba(244, 179, 66, 0.3)' }}>
+                      <span className="text-xs font-medium" style={{ color: '#F4B342' }}>Stato:</span>
+                      <span 
+                        className="px-2 py-1 rounded text-xs font-bold"
+                        style={{ 
+                          color: sensor.connected ? '#22c55e' : '#ef4444',
+                          backgroundColor: sensor.connected ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)',
                         }}
                       >
-                        {deletingSensor === sensor.name ? (
-                          <span className="flex items-center justify-center gap-1">
-                            <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
-                            Eliminazione...
-                          </span>
-                        ) : (
-                          <span className="flex items-center justify-center gap-1">
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                            Elimina
-                          </span>
-                        )}
-                      </button>
+                        {sensor.connected ? '✓ CONNESSO' : '✗ DISCONNESSO'}
+                      </span>
                     </div>
 
-                    <div className="space-y-1.5 text-sm mb-2">
-                      {/* Campo Connected - Evidente */}
-                      <div className="flex justify-between items-center py-2 px-2 rounded border-2 mb-2" style={{ 
-                        borderColor: sensor.connected ? '#22c55e' : '#ef4444',
-                        backgroundColor: sensor.connected ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)'
-                      }}>
-                        <span className="font-bold text-sm" style={{ color: '#F4B342' }}>Connected:</span>
-                        <span 
-                          className="font-bold text-sm px-2 py-1 rounded"
-                          style={{ 
-                            color: sensor.connected ? '#22c55e' : '#ef4444',
-                            backgroundColor: sensor.connected ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)',
-                            textShadow: '0 1px 2px rgba(0, 0, 0, 0.3)'
-                          }}
-                        >
-                          {sensor.connected ? '✓ CONNESSO' : '✗ DISCONNESSO'}
+                    {/* Pulsante Elimina (non cliccabile per aprire fullscreen) */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation() // Evita che apra fullscreen
+                        handleDeleteSensor(sensor.name)
+                      }}
+                      disabled={deletingSensor === sensor.name}
+                      className="w-full mt-3 px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-150 disabled:opacity-50 border-2"
+                      style={{
+                        background: deletingSensor === sensor.name
+                          ? 'linear-gradient(135deg, #8F0177, #360185)'
+                          : 'linear-gradient(135deg, #DE1A58, #8F0177)',
+                        borderColor: '#DE1A58',
+                        color: '#FFFFFF'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (deletingSensor !== sensor.name) {
+                          e.currentTarget.style.background = 'linear-gradient(135deg, #8F0177, #DE1A58)'
+                          e.currentTarget.style.boxShadow = '0 2px 8px rgba(222, 26, 88, 0.4)'
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (deletingSensor !== sensor.name) {
+                          e.currentTarget.style.background = 'linear-gradient(135deg, #DE1A58, #8F0177)'
+                          e.currentTarget.style.boxShadow = 'none'
+                        }
+                      }}
+                    >
+                      {deletingSensor === sensor.name ? (
+                        <span className="flex items-center justify-center gap-1">
+                          <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Eliminazione...
                         </span>
-                      </div>
-                      
-                      <div className="flex justify-between items-center py-1 border-b" style={{ borderColor: 'rgba(244, 179, 66, 0.3)' }}>
-                        <span className="font-medium" style={{ color: '#F4B342' }}>Tipo:</span>
-                        <span className="font-semibold" style={{ color: '#FFFFFF' }}>{sensor.type.toUpperCase()}</span>
-                      </div>
-                      <div className="flex justify-between items-center py-1 border-b" style={{ borderColor: 'rgba(244, 179, 66, 0.3)' }}>
-                        <span className="font-medium" style={{ color: '#F4B342' }}>IP:</span>
-                        <span className="font-mono text-xs" style={{ color: '#FFFFFF' }}>{sensor.ip}</span>
-                      </div>
-                      {sensor.port && (
-                        <div className="flex justify-between items-center py-1 border-b" style={{ borderColor: 'rgba(244, 179, 66, 0.3)' }}>
-                          <span className="font-medium" style={{ color: '#F4B342' }}>Porta:</span>
-                          <span className="font-semibold" style={{ color: '#FFFFFF' }}>{sensor.port}</span>
-                        </div>
+                      ) : (
+                        <span className="flex items-center justify-center gap-1">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                          Elimina
+                        </span>
                       )}
-                      <div className="flex justify-between items-center py-1">
-                        <span className="font-medium" style={{ color: '#F4B342' }}>Agg:</span>
-                        <span className="text-xs" style={{ color: '#FFFFFF' }}>{formatDate(sensor.last_update)}</span>
-                      </div>
-                    </div>
-
-                    {/* Interfaccia di controllo dinamica per sensori custom */}
-                    {sensor.template_id && sensorComponents[sensor.template_id] && (
-                      <Suspense fallback={<div className="p-4 text-center text-sm" style={{ color: '#F4B342' }}>Caricamento interfaccia...</div>}>
-                        {(() => {
-                          const Component = sensorComponents[sensor.template_id!]
-                          return <Component sensorName={sensor.name} />
-                        })()}
-                      </Suspense>
-                    )}
-
-                    {sensor.actions && Object.keys(sensor.actions).length > 0 && (
-                      <div className="mt-2 pt-2 border-t" style={{ borderColor: 'rgba(244, 179, 66, 0.3)' }}>
-                        <p className="text-xs font-semibold mb-1.5" style={{ color: '#F4B342' }}>Azioni:</p>
-                        <div className="flex flex-wrap gap-1">
-                          {Object.keys(sensor.actions).map((actionName) => {
-                            const actionKey = `${sensor.name}-${actionName}`
-                            const isLoading = actionLoading[actionKey]
-                            return (
-                              <button
-                                key={actionName}
-                                onClick={() => handleActionClick(sensor.name, actionName)}
-                                disabled={isLoading}
-                                className="px-2 py-1 rounded text-[10px] font-medium border transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-                                style={{
-                                  background: isLoading 
-                                    ? 'linear-gradient(135deg, rgba(143, 1, 119, 0.2), rgba(54, 1, 133, 0.15))'
-                                    : 'linear-gradient(135deg, rgba(244, 179, 66, 0.2), rgba(244, 179, 66, 0.15))',
-                                  color: isLoading ? '#8F0177' : '#F4B342',
-                                  borderColor: isLoading ? '#8F0177' : '#F4B342',
-                                  cursor: isLoading ? 'wait' : 'pointer'
-                                }}
-                                onMouseEnter={(e) => {
-                                  if (!isLoading) {
-                                    e.currentTarget.style.background = 'linear-gradient(135deg, rgba(244, 179, 66, 0.3), rgba(244, 179, 66, 0.2))'
-                                    e.currentTarget.style.boxShadow = '0 2px 8px rgba(244, 179, 66, 0.3)'
-                                  }
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.background = isLoading 
-                                    ? 'linear-gradient(135deg, rgba(143, 1, 119, 0.2), rgba(54, 1, 133, 0.15))'
-                                    : 'linear-gradient(135deg, rgba(244, 179, 66, 0.2), rgba(244, 179, 66, 0.15))'
-                                  e.currentTarget.style.boxShadow = 'none'
-                                }}
-                              >
-                                {isLoading ? '...' : actionName}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )}
+                    </button>
                   </div>
                 ))}
               </div>
@@ -490,6 +371,212 @@ function App() {
           </div>
         </div>
       </div>
+
+      {/* Modal Fullscreen per componente sensore */}
+      {fullscreenSensor && (() => {
+        const sensor = sensors.find(s => s.name === fullscreenSensor)
+        console.log('🔍 Fullscreen sensor:', sensor)
+        console.log('📋 Template ID:', sensor?.template_id)
+        console.log('📦 Componenti disponibili:', Object.keys(sensorComponents))
+        console.log('🔗 Componente per template_id:', sensor?.template_id ? sensorComponents[sensor.template_id] : 'N/A')
+        
+        if (!sensor) {
+          console.warn('⚠ Sensore non trovato:', fullscreenSensor)
+          return (
+            <div style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 10000,
+              backgroundColor: '#360185',
+              padding: '2rem',
+              color: '#F4B342',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexDirection: 'column'
+            }}>
+              <h1>Sensore non trovato</h1>
+              <p>Il sensore "{fullscreenSensor}" non esiste.</p>
+              <button
+                onClick={() => setFullscreenSensor(null)}
+                style={{
+                  marginTop: '1rem',
+                  padding: '0.5rem 1rem',
+                  backgroundColor: '#ef4444',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
+                }}
+              >
+                ✕ Chiudi
+              </button>
+            </div>
+          )
+        }
+        
+        if (!sensor.template_id) {
+          console.warn('⚠ Sensore senza template_id:', sensor.name)
+          return (
+            <div style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 10000,
+              backgroundColor: '#360185',
+              padding: '2rem',
+              color: '#F4B342',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexDirection: 'column'
+            }}>
+              <h1>Sensore senza template</h1>
+              <p>Il sensore "{sensor.name}" non ha un template_id associato.</p>
+              <p style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}>
+                Questo sensore è stato creato come "custom" e non ha un'interfaccia dedicata.
+              </p>
+              <button
+                onClick={() => setFullscreenSensor(null)}
+                style={{
+                  marginTop: '1rem',
+                  padding: '0.5rem 1rem',
+                  backgroundColor: '#ef4444',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
+                }}
+              >
+                ✕ Chiudi
+              </button>
+            </div>
+          )
+        }
+        
+        if (!sensorComponents[sensor.template_id]) {
+          console.warn(`⚠ Componente non trovato per template_id: ${sensor.template_id}`)
+          console.warn('Componenti disponibili:', Object.keys(sensorComponents))
+          return (
+            <div style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 10000,
+              backgroundColor: '#360185',
+              padding: '2rem',
+              color: '#F4B342',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexDirection: 'column'
+            }}>
+              <h1>Componente non disponibile</h1>
+              <p>Il componente per il template "{sensor.template_id}" non è stato trovato.</p>
+              <p style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}>
+                Verifica che il sensore sia abilitato in sensors.config.json
+              </p>
+              <p style={{ fontSize: '0.8rem', marginTop: '0.5rem', color: '#999' }}>
+                Template ID: {sensor.template_id}
+              </p>
+              <button
+                onClick={() => setFullscreenSensor(null)}
+                style={{
+                  marginTop: '1rem',
+                  padding: '0.5rem 1rem',
+                  backgroundColor: '#ef4444',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
+                }}
+              >
+                ✕ Chiudi
+              </button>
+            </div>
+          )
+        }
+        
+        return (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 10000,
+              backgroundColor: '#360185',
+              overflow: 'auto'
+            }}
+          >
+            {/* Header */}
+            <div style={{
+              position: 'sticky',
+              top: 0,
+              padding: '1rem',
+              backgroundColor: 'rgba(54, 1, 133, 0.95)',
+              borderBottom: '2px solid #F4B342',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              zIndex: 10001
+            }}>
+              <h1 style={{ color: '#F4B342', margin: 0, fontSize: '1.5rem' }}>
+                {sensor.name}
+              </h1>
+              <button
+                onClick={() => setFullscreenSensor(null)}
+                style={{
+                  padding: '0.5rem 1rem',
+                  backgroundColor: '#ef4444',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
+                }}
+              >
+                ✕ Chiudi
+              </button>
+            </div>
+
+            {/* Componente del plugin in fullscreen */}
+            <div style={{ padding: '2rem' }}>
+              <Suspense fallback={
+                <div style={{ textAlign: 'center', padding: '2rem', color: '#F4B342' }}>
+                  Caricamento interfaccia...
+                </div>
+              }>
+                {(() => {
+                  const Component = sensorComponents[sensor.template_id!]
+                  console.log('🎨 Render componente per template_id:', sensor.template_id)
+                  if (!Component) {
+                    console.error('❌ Component è undefined!')
+                    return (
+                      <div style={{ padding: '2rem', textAlign: 'center', color: '#F4B342' }}>
+                        <h2>Errore: Componente non definito</h2>
+                        <p>Template ID: {sensor.template_id}</p>
+                      </div>
+                    )
+                  }
+                  return <Component sensorName={sensor.name} />
+                })()}
+              </Suspense>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

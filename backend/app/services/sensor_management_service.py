@@ -99,7 +99,7 @@ class SensorManagementService:
             if check_connection:
                 # Verifica la connessione solo se richiesto
                 is_connected = await self.check_sensor_connection(sensor)
-                status_dict['connected'] = is_connected
+            status_dict['connected'] = is_connected
             # Altrimenti usa lo stato cached (sensor.connected)
             
             return [SensorStatus(**status_dict)]
