@@ -24,6 +24,10 @@ COPY nginx.conf /etc/nginx/nginx.conf
 # Copia i file buildati dallo stage builder
 COPY --from=builder /app/dist /usr/share/nginx/html
 
+# Copia configurazione sensori dalla cartella public
+# Il file viene copiato da scripts/prepare-frontend-build.js prima del build
+COPY --from=builder /app/public/sensors.config.json /usr/share/nginx/html/sensors.config.json
+
 # Espone la porta 80
 EXPOSE 80
 

@@ -1,7 +1,16 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, lazy, Suspense } from 'react'
+import type { ComponentType } from 'react'
 import './App.css'
 import PinModal from './pinmodal/PinModal'
 import AddSensor from './addSensor/AddSensor'
+
+// Interfaccia comune per i componenti sensori
+interface SensorControlProps {
+  sensorName: string
+}
+
+// Componenti sensori caricati dinamicamente
+const sensorComponents: Record<string, React.LazyExoticComponent<ComponentType<SensorControlProps>>> = {}
 
 interface SensorStatus {
   name: string
@@ -12,6 +21,7 @@ interface SensorStatus {
   last_update: string | null
   enabled: boolean
   actions: Record<string, string> | null
+  template_id?: string | null
 }
 
 function App() {
@@ -20,24 +30,74 @@ function App() {
   const [isLoadingSensors, setIsLoadingSensors] = useState(false)
   const [sensorsError, setSensorsError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({})
+  const [deletingSensor, setDeletingSensor] = useState<string | null>(null)
+  const [sensorsConfigLoaded, setSensorsConfigLoaded] = useState(false)
+
+  // Carica configurazione sensori all'avvio
+  useEffect(() => {
+    fetch('/sensors.config.json')
+      .then(res => res.json())
+      .then(config => {
+        // Lazy load solo i componenti abilitati
+        config.enabled_sensors?.forEach((sensorId: string) => {
+          const componentName = config.sensors?.[sensorId]?.component
+          if (componentName) {
+            sensorComponents[sensorId] = lazy(() => 
+              import(`./sensorCard/${componentName}`).catch(() => {
+                console.warn(`Componente ${componentName} non trovato`)
+                // Restituisce un componente vuoto con il tipo corretto
+                return { 
+                  default: (() => null) as ComponentType<SensorControlProps>
+                }
+              })
+            )
+          }
+        })
+        setSensorsConfigLoaded(true)
+      })
+      .catch(() => {
+        console.warn('Configurazione sensori non trovata, nessun sensore custom caricato')
+        setSensorsConfigLoaded(true)
+      })
+  }, [])
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && sensorsConfigLoaded) {
       fetchSensors()
     }
-  }, [isAuthenticated])
+  }, [isAuthenticated, sensorsConfigLoaded])
 
   const fetchSensors = async () => {
     setIsLoadingSensors(true)
     setSensorsError(null)
     
     try {
-      const response = await fetch('http://localhost:8000/sensors/')
+      // Prima richiesta: ottieni subito lo stato cached (veloce, non bloccante)
+      const response = await fetch('http://localhost:8000/sensors/?check_connection=false')
       if (!response.ok) {
         throw new Error(`Errore HTTP! status: ${response.status}`)
       }
       const data = await response.json()
-      setSensors(data)
+      setSensors(data)  // Mostra subito i dati cached
+      setIsLoadingSensors(false)  // L'interfaccia è già reattiva
+      
+      // Seconda richiesta in background: verifica le connessioni (non blocca l'interfaccia)
+      // Usa una Promise senza await per eseguire in background
+      fetch('http://localhost:8000/sensors/?check_connection=true')
+        .then(connectionResponse => {
+          if (connectionResponse.ok) {
+            return connectionResponse.json()
+          }
+          throw new Error(`HTTP ${connectionResponse.status}`)
+        })
+        .then(updatedData => {
+          console.log('Connessioni verificate, aggiornamento dati:', updatedData)
+          setSensors(updatedData)  // Aggiorna quando arrivano i nuovi dati
+        })
+        .catch(connectionError => {
+          // Ignora errori nella verifica delle connessioni (non critico)
+          console.warn('Errore durante la verifica delle connessioni (non critico):', connectionError)
+        })
     } catch (error) {
       if (error instanceof Error) {
         setSensorsError(error.message)
@@ -45,7 +105,6 @@ function App() {
         setSensorsError('Errore sconosciuto nel caricamento dei sensori')
       }
       console.error('Errore durante il caricamento dei sensori:', error)
-    } finally {
       setIsLoadingSensors(false)
     }
   }
@@ -68,6 +127,39 @@ function App() {
       }).format(date)
     } catch {
       return dateString
+    }
+  }
+
+  const handleDeleteSensor = async (sensorName: string) => {
+    // Conferma prima di eliminare
+    if (!confirm(`Sei sicuro di voler eliminare il sensore "${sensorName}"?`)) {
+      return
+    }
+
+    setDeletingSensor(sensorName)
+    try {
+      // Encoda il nome del sensore per l'URL
+      const encodedSensorName = encodeURIComponent(sensorName)
+      const response = await fetch(`http://localhost:8000/sensors/${encodedSensorName}`, {
+        method: 'DELETE'
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: `Errore HTTP: ${response.status}` }))
+        throw new Error(errorData.detail || errorData.message || `Errore HTTP: ${response.status}`)
+      }
+      
+      // Ricarica la lista dei sensori
+      await fetchSensors()
+    } catch (error) {
+      if (error instanceof Error) {
+        setSensorsError(error.message)
+      } else {
+        setSensorsError('Errore sconosciuto durante l\'eliminazione del sensore')
+      }
+      console.error('Errore durante l\'eliminazione del sensore:', error)
+    } finally {
+      setDeletingSensor(null)
     }
   }
 
@@ -256,6 +348,51 @@ function App() {
                       </div>
                     </div>
 
+                    {/* Pulsante Elimina */}
+                    <div className="mb-2">
+                      <button
+                        onClick={() => handleDeleteSensor(sensor.name)}
+                        disabled={deletingSensor === sensor.name}
+                        className="w-full px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed border-2"
+                        style={{
+                          background: deletingSensor === sensor.name
+                            ? 'linear-gradient(135deg, #8F0177, #360185)'
+                            : 'linear-gradient(135deg, #DE1A58, #8F0177)',
+                          borderColor: '#DE1A58',
+                          color: '#FFFFFF'
+                        }}
+                        onMouseEnter={(e) => {
+                          if (deletingSensor !== sensor.name) {
+                            e.currentTarget.style.background = 'linear-gradient(135deg, #8F0177, #DE1A58)'
+                            e.currentTarget.style.boxShadow = '0 2px 8px rgba(222, 26, 88, 0.4)'
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (deletingSensor !== sensor.name) {
+                            e.currentTarget.style.background = 'linear-gradient(135deg, #DE1A58, #8F0177)'
+                            e.currentTarget.style.boxShadow = 'none'
+                          }
+                        }}
+                      >
+                        {deletingSensor === sensor.name ? (
+                          <span className="flex items-center justify-center gap-1">
+                            <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Eliminazione...
+                          </span>
+                        ) : (
+                          <span className="flex items-center justify-center gap-1">
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            Elimina
+                          </span>
+                        )}
+                      </button>
+                    </div>
+
                     <div className="space-y-1.5 text-sm mb-2">
                       {/* Campo Connected - Evidente */}
                       <div className="flex justify-between items-center py-2 px-2 rounded border-2 mb-2" style={{ 
@@ -294,6 +431,16 @@ function App() {
                         <span className="text-xs" style={{ color: '#FFFFFF' }}>{formatDate(sensor.last_update)}</span>
                       </div>
                     </div>
+
+                    {/* Interfaccia di controllo dinamica per sensori custom */}
+                    {sensor.template_id && sensorComponents[sensor.template_id] && (
+                      <Suspense fallback={<div className="p-4 text-center text-sm" style={{ color: '#F4B342' }}>Caricamento interfaccia...</div>}>
+                        {(() => {
+                          const Component = sensorComponents[sensor.template_id!]
+                          return <Component sensorName={sensor.name} />
+                        })()}
+                      </Suspense>
+                    )}
 
                     {sensor.actions && Object.keys(sensor.actions).length > 0 && (
                       <div className="mt-2 pt-2 border-t" style={{ borderColor: 'rgba(244, 179, 66, 0.3)' }}>

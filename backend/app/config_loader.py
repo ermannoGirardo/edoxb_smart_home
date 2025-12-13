@@ -38,8 +38,7 @@ class ConfigLoader:
         template = SensorTemplate(
             common_fields=convert_fields(template_data.get('common_fields', [])),
             http_fields=convert_fields(template_data.get('http_fields', [])),
-            websocket_fields=convert_fields(template_data.get('websocket_fields', [])),
-            custom_fields=convert_fields(template_data.get('custom_fields', []))
+            websocket_fields=convert_fields(template_data.get('websocket_fields', []))
         )
         
         self.template = template

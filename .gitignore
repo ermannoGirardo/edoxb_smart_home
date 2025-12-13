@@ -1,0 +1,17 @@
+Arduino/sketches/*
+
+# Escludi gli sketch che non entrano nel flusso del codice
+# Gli sketch sono file di esempio/referenza e vengono serviti via API,
+# ma possono essere esclusi dal repository se non necessari per il funzionamento base
+backend/app/sketches/**/*.py
+# Mantieni i README.md degli sketch per documentazione
+# backend/app/sketches/**/README.md
+
+# Escludi file markdown generici (ma mantieni README principali)
+*.md
+!README.md
+!backend/README.md
+!frontend/README.md
+
+# File generati automaticamente
+.env.sensors

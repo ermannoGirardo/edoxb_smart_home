@@ -1,0 +1,14 @@
+{
+  "enabled_sensors": ["shelly_rgbw2", "shelly_dimmer2"],
+  "sensors": {
+    "shelly_rgbw2": {
+      "component": "ShellyRGBW2Control",
+      "template_id": "shelly_rgbw2"
+    },
+    "shelly_dimmer2": {
+      "component": "ShellyDimmer2Control",
+      "template_id": "shelly_dimmer2"
+    }
+  }
+}
+

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Optional
 from app.services.business_logic import BusinessLogic
 from app.models import SensorStatus, SensorDataResponse, SensorCreateRequest, SensorUpdateRequest, SensorActionResponse
@@ -10,19 +10,33 @@ router = APIRouter(prefix="/sensors", tags=["sensors"])
 
 @router.get("/", response_model=List[SensorStatus])
 async def list_sensors(
+    check_connection: bool = Query(False, description="Se True, verifica le connessioni dei sensori"),
     business_logic: BusinessLogic = Depends(get_business_logic)
 ):
-    """Restituisce la lista di tutti i sensori con il loro stato"""
-    return await business_logic.get_sensor_status()
+    """
+    Restituisce la lista di tutti i sensori con il loro stato.
+    
+    - check_connection=False (default): Restituisce subito lo stato cached (veloce, non bloccante)
+    - check_connection=True: Verifica la connessione di tutti i sensori (più lento ma aggiornato)
+    """
+    print(f"GET /sensors/ - check_connection={check_connection}")
+    return await business_logic.get_sensor_status(check_connection=check_connection)
 
 
 @router.get("/{sensor_name}", response_model=SensorStatus)
 async def get_sensor_status(
     sensor_name: str,
+    check_connection: bool = Query(False, description="Se True, verifica la connessione del sensore"),
     business_logic: BusinessLogic = Depends(get_business_logic)
 ):
-    """Restituisce lo stato di un sensore specifico"""
-    status_list = await business_logic.get_sensor_status(sensor_name)
+    """
+    Restituisce lo stato di un sensore specifico.
+    
+    - check_connection=False (default): Restituisce subito lo stato cached (veloce)
+    - check_connection=True: Verifica la connessione (più lento ma aggiornato)
+    """
+    print(f"GET /sensors/{sensor_name} - check_connection={check_connection}")
+    status_list = await business_logic.get_sensor_status(sensor_name, check_connection=check_connection)
     if not status_list:
         raise HTTPException(status_code=404, detail=f"Sensore '{sensor_name}' non trovato")
     return status_list[0]
@@ -177,8 +191,25 @@ async def delete_sensor(
     business_logic: BusinessLogic = Depends(get_business_logic)
 ):
     """Elimina un sensore"""
+    # FastAPI decodifica automaticamente l'URL, ma verifichiamo comunque
+    # Il nome potrebbe avere spazi o caratteri speciali
+    print(f"Tentativo eliminazione sensore: '{sensor_name}'")
+    print(f"Sensori disponibili: {list(business_logic.sensors.keys())}")
+    
     if sensor_name not in business_logic.sensors:
-        raise HTTPException(status_code=404, detail=f"Sensore '{sensor_name}' non trovato")
+        # Prova a cercare case-insensitive o con spazi normalizzati
+        sensor_name_lower = sensor_name.lower().strip()
+        matching_sensor = None
+        for key in business_logic.sensors.keys():
+            if key.lower().strip() == sensor_name_lower:
+                matching_sensor = key
+                break
+        
+        if matching_sensor:
+            sensor_name = matching_sensor
+            print(f"Trovato sensore con nome normalizzato: '{sensor_name}'")
+        else:
+            raise HTTPException(status_code=404, detail=f"Sensore '{sensor_name}' non trovato. Sensori disponibili: {list(business_logic.sensors.keys())}")
     
     success = await business_logic.remove_sensor(sensor_name)
     if not success:

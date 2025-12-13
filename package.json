@@ -1,0 +1,15 @@
+{
+  "name": "edoxb-smart-home",
+  "version": "1.0.0",
+  "description": "Smart Home System with plugin-based sensors",
+  "scripts": {
+    "generate-env": "node scripts/generate-env-from-config.js",
+    "prepare-frontend": "node scripts/prepare-frontend-build.js",
+    "prebuild": "npm run generate-env && npm run prepare-frontend",
+    "docker:up": "npm run generate-env && npm run prepare-frontend && docker-compose up",
+    "docker:build": "npm run generate-env && npm run prepare-frontend && docker-compose up --build",
+    "docker:down": "docker-compose down"
+  },
+  "devDependencies": {}
+}
+

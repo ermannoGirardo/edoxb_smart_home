@@ -1,74 +1,95 @@
 #include <WiFiS3.h>
-#include <WebSocketsClient.h>
 
-WebSocketsClient ws;
+// Credenziali WiFi
+char ssid[] = "CasaLavagola1";
+char pass[] = "Marcello1963*";
 
-// Credentials WiFi
-const char ssid[] = "CasaLavagnola1";
-const char pass[] = "Marcello1963*";
+// Parametri server
+const char* host = "192.168.178.97";
+const int port = 8000;
 
-// Server WebSocket REMOTO
-const char* ws_host = "192.168.178.97";   // <--- METTI QUI IP SERVER
-const uint16_t ws_port = 8005;             // <--- METTI QUI PORTA SERVER
-const char* ws_path = "/ws";               // <--- per la maggior parte dei server
-
-unsigned long lastSend = 0;
+// Stato WiFi
+int status = WL_IDLE_STATUS;
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
+  delay(2000);
 
-  // Connect WiFi
-  Serial.println("Connessione WiFi...");
-  while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
-    delay(2000);
-    Serial.print(".");
+  Serial.println("Inizializzazione WiFi...");
+
+  // Connessione WiFi
+  while (status != WL_CONNECTED) {
+    Serial.print("Connessione a: ");
+    Serial.println(ssid);
+    status = WiFi.begin(ssid, pass);
+    delay(3000);
   }
 
-  Serial.println();
-  Serial.print("Connesso. IP Arduino: ");
+  Serial.println("WiFi connesso!");
+  Serial.print("IP assegnato: ");
   Serial.println(WiFi.localIP());
+  Serial.println("Pronto. Scrivi 'accendi' o 'spegni' nel monitor seriale.");
+}
 
-  // Setup WebSocket client
-  ws.begin(ws_host, ws_port, ws_path);
+void inviaPOST(String comando) {
+  WiFiClient client;
 
-  ws.onEvent(webSocketEvent);
+  Serial.println("------------------------------");
+  Serial.print("Connessione a ");
+  Serial.print(host);
+  Serial.print(":");
+  Serial.println(port);
 
-  // Impostazioni raccomandate
-  ws.setReconnectInterval(5000);   // tenta retry ogni 5s
-  ws.enableHeartbeat(15000, 3000, 2);
+  if (!client.connect(host, port)) {
+    Serial.println("ERRORE: impossibile connettersi al server");
+    return;
+  }
+
+  String url = "/luce/" + comando;
+  String body = "{}";  // Corpo JSON (vuoto se non richiesto)
+
+  Serial.print("Invio POST a ");
+  Serial.println(url);
+
+  // Header HTTP
+  client.print("POST " + url + " HTTP/1.1\r\n");
+  client.print("Host: " + String(host) + "\r\n");
+  client.print("Content-Type: application/json\r\n");
+  client.print("Content-Length: " + String(body.length()) + "\r\n");
+  client.print("Connection: close\r\n\r\n");
+
+  // Corpo della richiesta
+  client.print(body);
+
+  Serial.println("Richiesta inviata. In attesa della risposta...\n");
+
+  // Lettura risposta server
+  while (client.connected() || client.available()) {
+    if (client.available()) {
+      String line = client.readStringUntil('\n');
+      Serial.println(line);
+    }
+  }
+
+  client.stop();
+  Serial.println("Richiesta completata!");
+  Serial.println("------------------------------\n");
 }
 
 void loop() {
-  ws.loop();
+  // Se arriva un comando dal monitor seriale...
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
 
-  // invia "ciao" ogni 5 secondi
-  if (millis() - lastSend > 5000) {
-    lastSend = millis();
-
-    Serial.println("Invio: ciao");
-    ws.sendTXT("ciao");
-  }
-}
-
-void webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
-
-  switch (type) {
-
-    case WStype_CONNECTED:
-      Serial.println("WebSocket connesso al server");
-      ws.sendTXT("ciao");   // primo messaggio
-      break;
-
-    case WStype_DISCONNECTED:
-      Serial.println("WebSocket disconnesso");
-      break;
-
-    case WStype_TEXT:
-      Serial.print("Ricevuto: ");
-      Serial.println((char*)payload);
-      break;
-
-    default:
-      break;
+    if (cmd == "accendi") {
+      inviaPOST("accendi");
+    } 
+    else if (cmd == "spegni") {
+      inviaPOST("spegni");
+    } 
+    else {
+      Serial.println("Comando non valido. Usa: accendi | spegni");
+    }
   }
 }

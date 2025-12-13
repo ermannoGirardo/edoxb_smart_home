@@ -11,7 +11,11 @@ from app.db.mongo_client import MongoClientWrapper
 from app.services.mqtt_client import MQTTClient
 from app.services.business_logic import BusinessLogic
 from app.api.routes import sensors, frontend
+# I router dei sensori vengono caricati dinamicamente dal plugin loader
 from app import dependencies
+from app.protocols.protocol_registry import ProtocolRegistry
+from app.protocols.http_protocol import HTTPProtocol
+from app.protocols.websocket_protocol import WebSocketProtocol
 
 
 # Variabili globali per i servizi
@@ -65,6 +69,11 @@ async def lifespan(app: FastAPI):
     # Per ora MQTT è disabilitato - la classe MQTTClient è uno stub vuoto
     mqtt_client = None
     
+    # Registra i protocolli disponibili
+    ProtocolRegistry.register_protocol("http", HTTPProtocol)
+    ProtocolRegistry.register_protocol("websocket", WebSocketProtocol)
+    print(f"Protocolli registrati: {ProtocolRegistry.list_protocols()}")
+    
     # Carica configurazioni sensori dal database
     sensor_configs = []
     if mongo_client is not None:
@@ -89,10 +98,43 @@ async def lifespan(app: FastAPI):
     dependencies.business_logic = business_logic
     dependencies.mongo_client = mongo_client
     
-    # Connetti tutti i sensori
+    # Valida e connetti tutti i sensori
+    # La validazione delle porte viene fatta automaticamente in connect_all_sensors
     connection_results = await business_logic.connect_all_sensors()
     connected_count = sum(1 for v in connection_results.values() if v)
     print(f"Connessi {connected_count}/{len(connection_results)} sensori")
+    
+    # Mostra informazioni sulle porte assegnate ai sensori WebSocket
+    from app.sensors.generic_sensor import GenericSensor
+    websocket_sensors = {name: sensor for name, sensor in sensors.items() 
+                        if isinstance(sensor, GenericSensor) and 
+                        sensor.protocol and 
+                        sensor.protocol.get_protocol_name() == "WebSocketProtocol"}
+    if websocket_sensors:
+        print("\nPorte WebSocket assegnate:")
+        for name, sensor in websocket_sensors.items():
+            if sensor.port:
+                print(f"  - {name}: porta {sensor.port}")
+            else:
+                print(f"  - {name}: porta non assegnata")
+    
+    # Carica plugin sensori (solo all'avvio, zero overhead a runtime)
+    enabled_sensors_str = os.getenv("ENABLED_SENSORS", "")
+    enabled_sensors = [s.strip() for s in enabled_sensors_str.split(",") if s.strip()]
+    
+    if enabled_sensors:
+        from app.plugins.plugin_loader import PluginLoader
+        plugin_loader = PluginLoader()
+        
+        print(f"\nCaricamento plugin sensori ({len(enabled_sensors)} sensori)...")
+        routers = await plugin_loader.load_enabled_sensors(enabled_sensors)
+        
+        # Registra i router (una volta, poi in memoria - zero overhead runtime)
+        for sensor_id, router in routers:
+            app.include_router(router)
+            print(f"✓ Router {sensor_id} registrato nell'app")
+    else:
+        print("Nessun sensore abilitato (ENABLED_SENSORS non impostato)")
     
     # Avvia polling
     await business_logic.start_polling()
@@ -141,9 +183,12 @@ app.add_middleware(
 # Le dipendenze sono ora in app.dependencies per evitare importazioni circolari
 
 
-# Include routers
+# Include routers base (sempre presenti)
 app.include_router(sensors.router)
 app.include_router(frontend.router)
+
+# I router dei sensori vengono caricati dinamicamente nel lifespan
+# (vedi codice sopra nel lifespan)
 
 
 @app.get("/")

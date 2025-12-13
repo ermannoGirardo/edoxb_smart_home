@@ -12,8 +12,23 @@ interface ActionItem {
   url: string
 }
 
+interface SensorTemplateType {
+  id: string
+  name: string
+  description: string
+  protocol: string
+  required_fields: string[]
+  optional_fields: string[]
+  default_config: Record<string, any>
+  control_interface: string
+}
+
 export default function AddSensor({ onCancel, onSuccess }: AddSensorProps) {
   const [showForm, setShowForm] = useState(false)
+  const [showTemplateSelection, setShowTemplateSelection] = useState(false)
+  const [selectedMode, setSelectedMode] = useState<'custom' | 'template' | null>(null)
+  const [selectedTemplate, setSelectedTemplate] = useState<SensorTemplateType | null>(null)
+  const [availableTemplates, setAvailableTemplates] = useState<SensorTemplateType[]>([])
   const [template, setTemplate] = useState<SensorTemplate | null>(null)
   const [formData, setFormData] = useState<Record<string, any>>({})
   const [actionsList, setActionsList] = useState<ActionItem[]>([])
@@ -22,6 +37,29 @@ export default function AddSensor({ onCancel, onSuccess }: AddSensorProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitSuccess, setSubmitSuccess] = useState(false)
   const [enablePolling, setEnablePolling] = useState(false)
+
+  const fetchSensorTemplates = async () => {
+    setIsLoading(true)
+    setError(null)
+    
+    try {
+      const response = await fetch('http://localhost:8000/frontend/sensor-templates')
+      if (!response.ok) {
+        throw new Error(`Errore HTTP! status: ${response.status}`)
+      }
+      const data = await response.json()
+      setAvailableTemplates(data.templates || [])
+      setShowTemplateSelection(true)
+    } catch (error) {
+      if (error instanceof Error) {
+        setError(error.message)
+      } else {
+        setError('Errore sconosciuto')
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   const fetchTemplate = async () => {
     setIsLoading(true)
@@ -37,7 +75,9 @@ export default function AddSensor({ onCancel, onSuccess }: AddSensorProps) {
       setShowForm(true)
       
       // Inizializza i valori di default
-      const initialData: Record<string, any> = {}
+      const initialData: Record<string, any> = {
+        template_id: 'custom'  // Imposta template_id a 'custom' per sensori custom
+      }
       const allFields = [...data.common_fields, ...data.http_fields, ...data.websocket_fields, ...data.custom_fields]
       allFields.forEach(field => {
         if (field.default !== null && field.default !== undefined) {
@@ -66,6 +106,46 @@ export default function AddSensor({ onCancel, onSuccess }: AddSensorProps) {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  const handleTemplateSelect = async (templateId: string) => {
+    setIsLoading(true)
+    setError(null)
+    
+    try {
+      const response = await fetch(`http://localhost:8000/frontend/sensor-templates/${templateId}/config`)
+      if (!response.ok) {
+        throw new Error(`Errore HTTP! status: ${response.status}`)
+      }
+      const templateConfig = await response.json()
+      setSelectedTemplate(templateConfig)
+      setSelectedMode('template')
+      setShowTemplateSelection(false)
+      
+      // Inizializza formData con i default del template, includendo template_id
+      const initialData: Record<string, any> = {
+        ...templateConfig.default_config,
+        type: templateConfig.protocol,
+        template_id: templateId  // Salva l'ID del template
+      }
+      setFormData(initialData)
+      setShowForm(true)
+    } catch (error) {
+      if (error instanceof Error) {
+        setError(error.message)
+      } else {
+        setError('Errore sconosciuto')
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleCustomSelect = async () => {
+    setSelectedMode('custom')
+    // Imposta template_id a "custom" quando si seleziona custom
+    setFormData(prev => ({ ...prev, template_id: 'custom' }))
+    await fetchTemplate()
   }
 
   const handleFieldChange = (name: string, value: any) => {
@@ -482,6 +562,9 @@ export default function AddSensor({ onCancel, onSuccess }: AddSensorProps) {
       // Reset del form dopo il successo
       setTimeout(() => {
         setShowForm(false)
+        setShowTemplateSelection(false)
+        setSelectedMode(null)
+        setSelectedTemplate(null)
         setTemplate(null)
         setFormData({})
         setActionsList([])
@@ -503,6 +586,9 @@ export default function AddSensor({ onCancel, onSuccess }: AddSensorProps) {
 
   const handleCancel = () => {
     setShowForm(false)
+    setShowTemplateSelection(false)
+    setSelectedMode(null)
+    setSelectedTemplate(null)
     setTemplate(null)
     setFormData({})
     setActionsList([])
@@ -513,11 +599,90 @@ export default function AddSensor({ onCancel, onSuccess }: AddSensorProps) {
     }
   }
 
+  const renderTemplateForm = () => {
+    if (!selectedTemplate) return null
+
+    return (
+      <div className="space-y-5">
+        {/* Campo Nome */}
+        <div className="p-4 rounded-lg border-2" style={{ 
+          borderColor: '#8F0177',
+          background: 'linear-gradient(135deg, rgba(143, 1, 119, 0.3), rgba(54, 1, 133, 0.2))'
+        }}>
+          <label htmlFor="name" className="block mb-2 text-sm font-semibold" style={{ color: '#F4B342' }}>
+            Nome Sensore <span className="ml-1" style={{ color: '#DE1A58' }}>*</span>
+          </label>
+          <input
+            id="name"
+            type="text"
+            value={formData.name || ''}
+            onChange={(e) => handleFieldChange('name', e.target.value)}
+            required
+            placeholder="es: shelly_rgbw2_01"
+            className="text-sm rounded-lg block w-full px-3 py-2.5 shadow-sm transition-colors border-2"
+            style={{ 
+              borderColor: '#8F0177',
+              backgroundColor: 'rgba(54, 1, 133, 0.4)',
+              color: '#FFFFFF',
+              outline: 'none'
+            }}
+            onFocus={(e) => {
+              e.target.style.borderColor = '#F4B342'
+              e.target.style.boxShadow = '0 0 0 3px rgba(244, 179, 66, 0.3)'
+              e.target.style.backgroundColor = 'rgba(54, 1, 133, 0.6)'
+            }}
+            onBlur={(e) => {
+              e.target.style.borderColor = '#8F0177'
+              e.target.style.boxShadow = 'none'
+              e.target.style.backgroundColor = 'rgba(54, 1, 133, 0.4)'
+            }}
+          />
+        </div>
+
+        {/* Campo IP */}
+        <div className="p-4 rounded-lg border-2" style={{ 
+          borderColor: '#8F0177',
+          background: 'linear-gradient(135deg, rgba(143, 1, 119, 0.3), rgba(54, 1, 133, 0.2))'
+        }}>
+          <label htmlFor="ip" className="block mb-2 text-sm font-semibold" style={{ color: '#F4B342' }}>
+            Indirizzo IP <span className="ml-1" style={{ color: '#DE1A58' }}>*</span>
+          </label>
+          <input
+            id="ip"
+            type="text"
+            value={formData.ip || ''}
+            onChange={(e) => handleFieldChange('ip', e.target.value)}
+            required
+            placeholder="es: 192.168.1.50"
+            className="text-sm rounded-lg block w-full px-3 py-2.5 shadow-sm transition-colors border-2"
+            style={{ 
+              borderColor: '#8F0177',
+              backgroundColor: 'rgba(54, 1, 133, 0.4)',
+              color: '#FFFFFF',
+              outline: 'none'
+            }}
+            onFocus={(e) => {
+              e.target.style.borderColor = '#F4B342'
+              e.target.style.boxShadow = '0 0 0 3px rgba(244, 179, 66, 0.3)'
+              e.target.style.backgroundColor = 'rgba(54, 1, 133, 0.6)'
+            }}
+            onBlur={(e) => {
+              e.target.style.borderColor = '#8F0177'
+              e.target.style.boxShadow = 'none'
+              e.target.style.backgroundColor = 'rgba(54, 1, 133, 0.4)'
+            }}
+          />
+        </div>
+
+      </div>
+    )
+  }
+
   return (
     <>
-      {!showForm && (
+      {!showForm && !showTemplateSelection && (
         <button
-          onClick={fetchTemplate}
+          onClick={fetchSensorTemplates}
           disabled={isLoading}
           className="inline-flex items-center gap-2 disabled:cursor-not-allowed text-white font-semibold py-2.5 px-5 rounded-lg transition-colors duration-150 shadow-lg hover:shadow-md disabled:shadow-md text-sm"
           style={{
@@ -569,6 +734,94 @@ export default function AddSensor({ onCancel, onSuccess }: AddSensorProps) {
         </div>
       )}
       
+      {showTemplateSelection && !showForm && (
+        <div className="fixed inset-0 flex items-center justify-center p-4 z-40" style={{ backgroundColor: 'rgba(54, 1, 133, 0.7)', backdropFilter: 'blur(4px)' }}>
+          <div className="backdrop-blur-md rounded-xl shadow-2xl max-w-2xl w-full border-2" style={{ 
+            borderColor: '#F4B342',
+            background: 'linear-gradient(135deg, #360185, #8F0177)',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.6)'
+          }}>
+            <div className="sticky top-0 backdrop-blur-md border-b px-6 py-5 flex justify-between items-center" style={{ 
+              borderBottomColor: '#8F0177',
+              background: 'linear-gradient(135deg, rgba(54, 1, 133, 0.95), rgba(143, 1, 119, 0.95))'
+            }}>
+              <div>
+                <h2 className="text-xl font-bold" style={{ color: '#F4B342' }}>Seleziona Tipo Sensore</h2>
+                <p className="text-sm mt-1" style={{ color: '#F4B342', opacity: 0.9 }}>Scegli tra un template predefinito o configurazione custom</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="transition-colors p-2 rounded-lg"
+                style={{ color: '#F4B342' }}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(244, 179, 66, 0.2)'}
+                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                aria-label="Chiudi"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-6">
+              <div className="space-y-4">
+                {/* Opzione Custom */}
+                <button
+                  onClick={handleCustomSelect}
+                  className="w-full p-5 rounded-lg border-2 text-left transition-all duration-200 hover:scale-105"
+                  style={{
+                    borderColor: '#8F0177',
+                    background: 'linear-gradient(135deg, rgba(143, 1, 119, 0.4), rgba(54, 1, 133, 0.3))'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = '#F4B342'
+                    e.currentTarget.style.background = 'linear-gradient(135deg, rgba(143, 1, 119, 0.6), rgba(54, 1, 133, 0.5))'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = '#8F0177'
+                    e.currentTarget.style.background = 'linear-gradient(135deg, rgba(143, 1, 119, 0.4), rgba(54, 1, 133, 0.3))'
+                  }}
+                >
+                  <h3 className="text-lg font-bold mb-2" style={{ color: '#F4B342' }}>Custom</h3>
+                  <p className="text-sm" style={{ color: '#FFFFFF', opacity: 0.9 }}>
+                    Configurazione completa con tutti i parametri personalizzabili
+                  </p>
+                </button>
+
+                {/* Template disponibili */}
+                {availableTemplates.map((tmpl) => (
+                  <button
+                    key={tmpl.id}
+                    onClick={() => handleTemplateSelect(tmpl.id)}
+                    className="w-full p-5 rounded-lg border-2 text-left transition-all duration-200 hover:scale-105"
+                    style={{
+                      borderColor: '#8F0177',
+                      background: 'linear-gradient(135deg, rgba(143, 1, 119, 0.4), rgba(54, 1, 133, 0.3))'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = '#F4B342'
+                      e.currentTarget.style.background = 'linear-gradient(135deg, rgba(143, 1, 119, 0.6), rgba(54, 1, 133, 0.5))'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = '#8F0177'
+                      e.currentTarget.style.background = 'linear-gradient(135deg, rgba(143, 1, 119, 0.4), rgba(54, 1, 133, 0.3))'
+                    }}
+                  >
+                    <h3 className="text-lg font-bold mb-2" style={{ color: '#F4B342' }}>{tmpl.name}</h3>
+                    <p className="text-sm mb-2" style={{ color: '#FFFFFF', opacity: 0.9 }}>
+                      {tmpl.description}
+                    </p>
+                    <p className="text-xs" style={{ color: '#F4B342', opacity: 0.8 }}>
+                      Protocollo: {tmpl.protocol.toUpperCase()} • Configurazione semplificata
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
       {submitSuccess && (
         <div className="fixed top-20 right-4 z-50 max-w-md animate-slide-in">
           <div className="backdrop-blur-md rounded-lg shadow-2xl p-4 border-l-4 border-2" style={{ 
@@ -592,7 +845,7 @@ export default function AddSensor({ onCancel, onSuccess }: AddSensorProps) {
         </div>
       )}
       
-      {showForm && template && !isLoading && (
+      {showForm && (template || selectedTemplate) && !isLoading && (
         <div className="fixed inset-0 flex items-center justify-center p-4 z-40" style={{ backgroundColor: 'rgba(54, 1, 133, 0.7)', backdropFilter: 'blur(4px)' }}>
           <div className="backdrop-blur-md rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto border-2" style={{ 
             borderColor: '#F4B342',
@@ -623,6 +876,21 @@ export default function AddSensor({ onCancel, onSuccess }: AddSensorProps) {
             </div>
             <div className="p-6">
               <form onSubmit={handleFormSubmit}>
+                {selectedMode === 'template' && selectedTemplate ? (
+                  // Form semplificato per template
+                  <>
+                    <div className="mb-6 p-4 rounded-lg border-2" style={{ 
+                      borderColor: '#F4B342',
+                      background: 'linear-gradient(135deg, rgba(244, 179, 66, 0.2), rgba(143, 1, 119, 0.1))'
+                    }}>
+                      <h3 className="text-lg font-bold mb-2" style={{ color: '#F4B342' }}>{selectedTemplate.name}</h3>
+                      <p className="text-sm" style={{ color: '#FFFFFF', opacity: 0.9 }}>{selectedTemplate.description}</p>
+                    </div>
+                    {renderTemplateForm()}
+                  </>
+                ) : (
+                  // Form completo per custom
+                  <>
                 {/* Checkbox per abilitare il polling */}
                 <div className="mb-8 p-5 rounded-lg border-2" style={{ 
                   background: 'linear-gradient(135deg, rgba(143, 1, 119, 0.4), rgba(54, 1, 133, 0.3))',
@@ -662,10 +930,16 @@ export default function AddSensor({ onCancel, onSuccess }: AddSensorProps) {
                   </label>
                 </div>
               
+                    {template && (
+                      <>
               {renderFields(template.common_fields, 'Campi Comuni')}
               {renderFields(template.http_fields, 'Campi HTTP')}
               {renderFields(template.websocket_fields, 'Campi WebSocket')}
               {renderFields(template.custom_fields, 'Campi Custom')}
+                      </>
+                    )}
+                  </>
+                )}
               
               <div className="flex gap-3 mt-8 pt-6 border-t-2" style={{ borderTopColor: '#F4B342' }}>
                 <button

@@ -8,24 +8,34 @@ class SensorType(str, Enum):
     """Tipi di sensori supportati"""
     HTTP = "http"
     WEBSOCKET = "websocket"
-    CUSTOM = "custom"
 
 
 class SensorConfig(BaseModel):
     """Configurazione di un sensore dal file YAML"""
     name: str = Field(..., description="Nome univoco del sensore")
-    type: SensorType = Field(..., description="Tipo di sensore")
+    type: SensorType = Field(..., description="Tipo di sensore (deprecato, usare protocol)")
     ip: str = Field(..., description="Indirizzo IP del sensore")
     port: Optional[int] = Field(None, description="Porta del sensore")
+    protocol: Optional[str] = Field(None, description="Protocollo di comunicazione (http, websocket, ecc.). Se non specificato, viene dedotto da 'type'")
     endpoint: Optional[str] = Field(None, description="Percorso URL per sensori HTTP (es: /api/temperature)")
-    protocol: Optional[str] = Field("http", description="Protocollo per sensori HTTP (http o https)")
+    http_protocol: Optional[str] = Field("http", description="Protocollo HTTP (http o https) - solo per protocollo HTTP")
     path: Optional[str] = Field(None, description="Path WebSocket")
-    custom_class: Optional[str] = Field(None, description="Classe personalizzata per sensori custom")
-    custom_params: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Parametri personalizzati")
     actions: Optional[Dict[str, str]] = Field(default_factory=dict, description="Azioni disponibili per il sensore (es: {'accendi': '/color/0?turn=on'})")
     enabled: bool = Field(True, description="Se il sensore è abilitato")
     poll_interval: Optional[int] = Field(5, description="Intervallo di polling in secondi")
     timeout: Optional[int] = Field(10, description="Timeout in secondi per le richieste HTTP/WebSocket", gt=0)
+    template_id: Optional[str] = Field(None, description="ID del template usato per creare il sensore (es: 'shelly_rgbw2', 'custom')")
+    
+    def get_communication_protocol(self) -> str:
+        """Restituisce il protocollo di comunicazione, deducendolo da 'type' se necessario"""
+        if self.protocol:
+            return self.protocol.lower()
+        # Retrocompatibilità: deduci da type
+        if self.type == SensorType.HTTP:
+            return "http"
+        elif self.type == SensorType.WEBSOCKET:
+            return "websocket"
+        return "http"  # default
 
 
 class SensorData(BaseModel):
@@ -47,6 +57,8 @@ class SensorStatus(BaseModel):
     last_update: Optional[datetime]
     enabled: bool
     actions: Optional[Dict[str, str]] = Field(default_factory=dict, description="Azioni disponibili per il sensore")
+    protocol: Optional[str] = Field(None, description="Protocollo di comunicazione utilizzato")
+    template_id: Optional[str] = Field(None, description="ID del template usato per creare il sensore")
 
 
 class SensorListResponse(BaseModel):
@@ -90,35 +102,33 @@ class SensorTemplate(BaseModel):
     common_fields: List[SensorFieldTemplate] = Field(..., description="Campi comuni a tutti i tipi")
     http_fields: List[SensorFieldTemplate] = Field(default_factory=list, description="Campi specifici per HTTP")
     websocket_fields: List[SensorFieldTemplate] = Field(default_factory=list, description="Campi specifici per WebSocket")
-    custom_fields: List[SensorFieldTemplate] = Field(default_factory=list, description="Campi specifici per custom")
 
 
 class SensorCreateRequest(BaseModel):
     """Richiesta per creare un nuovo sensore"""
     name: str = Field(..., description="Nome univoco del sensore")
-    type: SensorType = Field(..., description="Tipo di sensore")
+    type: SensorType = Field(..., description="Tipo di sensore (deprecato, usare protocol)")
     ip: str = Field(..., description="Indirizzo IP del sensore")
     port: Optional[int] = Field(None, description="Porta del sensore")
+    protocol: Optional[str] = Field(None, description="Protocollo di comunicazione (http, websocket, ecc.)")
     endpoint: Optional[str] = Field(None, description="Percorso URL per sensori HTTP")
-    protocol: Optional[str] = Field("http", description="Protocollo per sensori HTTP")
+    http_protocol: Optional[str] = Field("http", description="Protocollo HTTP (http o https) - solo per protocollo HTTP")
     path: Optional[str] = Field(None, description="Path WebSocket")
-    custom_class: Optional[str] = Field(None, description="Classe personalizzata per sensori custom")
-    custom_params: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Parametri personalizzati")
     actions: Optional[Dict[str, str]] = Field(default_factory=dict, description="Azioni disponibili per il sensore (es: {'accendi': '/color/0?turn=on'})")
     enabled: bool = Field(True, description="Se il sensore è abilitato")
     poll_interval: Optional[int] = Field(5, description="Intervallo di polling in secondi")
     timeout: Optional[int] = Field(10, description="Timeout in secondi", gt=0)
+    template_id: Optional[str] = Field(None, description="ID del template usato per creare il sensore (es: 'shelly_rgbw2', 'custom')")
 
 
 class SensorUpdateRequest(BaseModel):
     """Richiesta per aggiornare un sensore esistente"""
     ip: Optional[str] = Field(None, description="Indirizzo IP del sensore")
     port: Optional[int] = Field(None, description="Porta del sensore")
+    protocol: Optional[str] = Field(None, description="Protocollo di comunicazione (http, websocket, ecc.)")
     endpoint: Optional[str] = Field(None, description="Percorso URL per sensori HTTP")
-    protocol: Optional[str] = Field(None, description="Protocollo per sensori HTTP")
+    http_protocol: Optional[str] = Field(None, description="Protocollo HTTP (http o https) - solo per protocollo HTTP")
     path: Optional[str] = Field(None, description="Path WebSocket")
-    custom_class: Optional[str] = Field(None, description="Classe personalizzata per sensori custom")
-    custom_params: Optional[Dict[str, Any]] = Field(None, description="Parametri personalizzati")
     actions: Optional[Dict[str, str]] = Field(None, description="Azioni disponibili per il sensore (es: {'accendi': '/color/0?turn=on'})")
     enabled: Optional[bool] = Field(None, description="Se il sensore è abilitato")
     poll_interval: Optional[int] = Field(None, description="Intervallo di polling in secondi")

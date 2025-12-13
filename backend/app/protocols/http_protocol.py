@@ -1,21 +1,21 @@
 import aiohttp
 from typing import Dict, Any
 from datetime import datetime
-from app.sensors.sensor_base import SensorBase
+from app.protocols.protocol_base import ProtocolBase
 from app.models import SensorConfig, SensorData
 
 
-class HTTPSensor(SensorBase):
-    """Adapter per sensori HTTP"""
+class HTTPProtocol(ProtocolBase):
+    """Protocollo HTTP per la comunicazione con i sensori"""
     
     def __init__(self, config: SensorConfig):
         super().__init__(config)
         # Percorso URL dal file di configurazione (default "/" se non specificato)
         self.endpoint = config.endpoint if config.endpoint is not None else "/"
-        # Protocollo dal file di configurazione (default "http" se non specificato)
-        protocol = config.protocol if config.protocol is not None else "http"
+        # Protocollo HTTP dal file di configurazione (default "http" se non specificato)
+        protocol = config.http_protocol if config.http_protocol is not None else "http"
         if protocol not in ["http", "https"]:
-            raise ValueError(f"Protocollo non valido per sensore {self.name}: {protocol}. Usare 'http' o 'https'")
+            raise ValueError(f"Protocollo HTTP non valido per sensore {self.name}: {protocol}. Usare 'http' o 'https'")
         
         # Timeout dal file di configurazione (default 10 secondi se non specificato)
         timeout_seconds = config.timeout if config.timeout is not None else 10
@@ -31,27 +31,28 @@ class HTTPSensor(SensorBase):
             self.endpoint = "/" + self.endpoint
         self.url = f"{self.base_url}{self.endpoint}"
         
-        # Memorizza le azioni disponibili
-        self.actions = config.actions if config.actions else {}
-        
-        print(f"Sensore HTTP '{self.name}' configurato: URL={self.url}, timeout={timeout_seconds}s, azioni={list(self.actions.keys())}")
+        print(f"Protocollo HTTP configurato per sensore '{self.name}': URL={self.url}, timeout={timeout_seconds}s")
     
     async def connect(self) -> bool:
-        """Connette al sensore HTTP"""
+        """Connette al sensore HTTP con timeout breve per risposta rapida"""
         try:
-            if self.session is None or self.session.closed:
-                self.session = aiohttp.ClientSession(timeout=self.timeout)
-            
-            # Test di connessione
-            async with self.session.get(self.url) as response:
-                if response.status == 200:
-                    self.connected = True
-                    return True
-                else:
-                    self.connected = False
-                    return False
+            # Usa un timeout molto breve per la connessione iniziale (2 secondi)
+            # Questo rende l'interfaccia molto più reattiva
+            quick_timeout = aiohttp.ClientTimeout(total=2, connect=1)
+            async with aiohttp.ClientSession(timeout=quick_timeout) as quick_session:
+                async with quick_session.get(self.url) as response:
+                    if response.status == 200:
+                        self.connected = True
+                        self.update_last_update()
+                        # Crea la sessione permanente solo se la connessione è riuscita
+                        if self.session is None or self.session.closed:
+                            self.session = aiohttp.ClientSession(timeout=self.timeout)
+                        return True
+                    else:
+                        self.connected = False
+                        return False
         except Exception as e:
-            print(f"Errore connessione sensore HTTP {self.name}: {e}")
+            print(f"Errore connessione protocollo HTTP per sensore {self.name}: {e}")
             self.connected = False
             return False
     
@@ -102,30 +103,27 @@ class HTTPSensor(SensorBase):
             )
     
     async def is_connected(self) -> bool:
-        """Verifica se il sensore è connesso"""
+        """Verifica se il sensore è connesso con timeout molto breve per risposta rapida"""
         try:
-            if self.session is None or self.session.closed:
-                return False
-            
-            async with self.session.get(self.url) as response:
-                self.connected = (response.status == 200)
-                return self.connected
+            # Usa un timeout molto breve (1 secondo) per i controlli di connessione
+            # Questo rende l'interfaccia praticamente immediata
+            quick_timeout = aiohttp.ClientTimeout(total=1, connect=0.5)
+            async with aiohttp.ClientSession(timeout=quick_timeout) as quick_session:
+                async with quick_session.get(self.url) as response:
+                    self.connected = (response.status == 200)
+                    return self.connected
         except:
             self.connected = False
             return False
     
-    async def execute_action(self, action_name: str) -> Dict[str, Any]:
+    async def execute_action(self, action_name: str, action_path: str) -> Dict[str, Any]:
         """Esegue un'azione configurata sul sensore"""
-        if action_name not in self.actions:
-            raise ValueError(f"Azione '{action_name}' non trovata. Azioni disponibili: {list(self.actions.keys())}")
-        
-        action_url = self.actions[action_name]
         # Assicura che l'URL dell'azione inizi con "/"
-        if not action_url.startswith("/"):
-            action_url = "/" + action_url
+        if not action_path.startswith("/"):
+            action_path = "/" + action_path
         
         # Costruisce l'URL completo per l'azione
-        full_action_url = f"{self.base_url}{action_url}"
+        full_action_url = f"{self.base_url}{action_path}"
         print(f"Esecuzione azione '{action_name}' su sensore '{self.name}': GET {full_action_url}")
         
         try:

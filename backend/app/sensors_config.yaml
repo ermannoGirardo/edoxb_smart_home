@@ -14,8 +14,15 @@ sensor_template:
     - name: type
       type: enum
       required: true
-      description: "Tipo di sensore"
-      values: ["http", "websocket", "custom"]
+      description: "Tipo di sensore (deprecato, usare protocol)"
+      values: ["http", "websocket"]
+      example: "http"
+    
+    - name: protocol
+      type: enum
+      required: false
+      description: "Protocollo di comunicazione (http, websocket)"
+      values: ["http", "websocket"]
       example: "http"
     
     - name: ip
@@ -82,20 +89,4 @@ sensor_template:
       required: false
       description: "Path WebSocket"
       example: "/ws/motion"
-  
-  # Campi specifici per sensori custom
-  custom_fields:
-    - name: custom_class
-      type: string
-      required: true
-      description: "Classe personalizzata per sensori custom (formato: module.path.ClassName)"
-      example: "app.sensors.custom_sensor.CustomSensor"
-    
-    - name: custom_params
-      type: object
-      required: false
-      description: "Parametri personalizzati come dizionario chiave-valore"
-      example:
-        param1: "value1"
-        param2: "value2"
 

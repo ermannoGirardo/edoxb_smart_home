@@ -12,13 +12,19 @@ services:
   backend:
     build: ./backend
     container_name: backend
-    command: uvicorn app:app --host 0.0.0.0 --port 8000
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
     depends_on:
       - mongo
+    env_file:
+      - .env.sensors  # Variabili generate da sensors.config.json
     environment:
       - MONGODB_URL=mongodb://mongo:27017/mydb
+      - SENSOR_REGISTRY_URL=https://raw.githubusercontent.com/edoxb/smart-home-sensors/main
+      # ENABLED_SENSORS viene letto da .env.sensors
+    volumes:
+      - sensor_plugins:/app/plugins  # Cache plugin tra riavvii
     networks:
       - smart_home_network
 
@@ -35,6 +41,7 @@ services:
 
 volumes:
   mongo_data:
+  sensor_plugins:  # Volume per cache plugin sensori
 
 networks:
   smart_home_network:
