@@ -51,7 +51,9 @@ class MQTTProtocol(ProtocolBase):
             topic_command_template = topic_command_template.replace(placeholder, value)
         
         self.topic_status = topic_status_template
-        self.topic_command = topic_command_template if topic_command_template != "sensors/{name}/command" else f"sensors/{config.name}/command"
+        # Usa direttamente il template dopo la sostituzione dei placeholder
+        # La logica di default è già gestita alla linea 42
+        self.topic_command = topic_command_template
         
         # Flag per indicare se il topic è un wildcard (contiene # o +)
         self.is_wildcard_topic = "#" in self.topic_status or "+" in self.topic_status
