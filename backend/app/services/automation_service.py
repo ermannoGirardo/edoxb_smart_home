@@ -25,7 +25,7 @@ class AutomationService:
                         print(f"AutomationService: Temperatura {temp_float}°C > 25°C, accendo la luce sala...")
                         # Accendi Shelly usando il metodo diretto invece della richiesta HTTP
                         try:
-                            result = await self.business_logic.execute_sensor_action("luce sala", "turn-on")
+                            result = await self.business_logic.execute_sensor_action("luce sala", "accendi")
                             if result.success:
                                 print(f"AutomationService: ✓ Luce sala accesa con successo")
                             else:
