@@ -1,5 +1,5 @@
 {
-  "enabled_sensors": ["shelly_rgbw2", "shelly_dimmer2", "arduino_websocket"],
+  "enabled_sensors": ["shelly_rgbw2", "shelly_dimmer2", "arduino_grow_box", "shelly_ht", "shelly_1pm_mini_gen3", "shelly_pro_50em"],
   "sensors": {
     "shelly_rgbw2": {
       "component": "ShellyRGBW2Control",
@@ -9,10 +9,21 @@
       "component": "ShellyDimmer2Control",
       "template_id": "shelly_dimmer2"
     },
-    "arduino_websocket": {
-      "component": "ArduinoWebSocketControl",
-      "template_id": "arduino_websocket"
+    "arduino_grow_box": {
+      "component": "ArduinoGrowBoxControl",
+      "template_id": "arduino_grow_box"
+    },
+    "shelly_ht": {
+      "component": "ShellyHT",
+      "template_id": "shelly_ht"
+    },
+    "shelly_1pm_mini_gen3": {
+      "component": "Shelly1PMMiniGen3Control",
+      "template_id": "shelly_1pm_mini_gen3"
+    },
+    "shelly_pro_50em": {
+      "component": "ShellyPro50EMControl",
+      "template_id": "shelly_pro_50em"
     }
   }
 }
-

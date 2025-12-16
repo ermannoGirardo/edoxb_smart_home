@@ -8,6 +8,7 @@
     "prebuild": "npm run generate-env && npm run prepare-frontend",
     "docker:up": "npm run generate-env && npm run prepare-frontend && docker-compose up",
     "docker:build": "npm run generate-env && npm run prepare-frontend && docker-compose up --build",
+    "docker:build:no-cache": "npm run generate-env && npm run prepare-frontend && docker-compose build --no-cache && docker-compose up",
     "docker:down": "docker-compose down"
   },
   "devDependencies": {}

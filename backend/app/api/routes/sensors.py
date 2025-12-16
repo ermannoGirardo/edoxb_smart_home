@@ -49,10 +49,61 @@ async def read_sensor_data(
 ):
     """Legge i dati da un sensore specifico"""
     sensor_data = await business_logic.read_sensor_data(sensor_name)
+    
     if sensor_data is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Sensore '{sensor_name}' non trovato o disabilitato"
+        # Verifica se il sensore esiste almeno (anche se disabilitato o senza dati)
+        status_list = await business_logic.get_sensor_status(sensor_name, check_connection=False)
+        
+        # Se il sensore non è in memoria, prova a caricarlo dal database
+        if not status_list:
+            # Prova a caricare il sensore dal database se esiste
+            try:
+                from app.models import SensorConfig
+                # Accedi a mongo_client tramite business_logic
+                if hasattr(business_logic, '_management_service') and hasattr(business_logic._management_service, 'mongo_client'):
+                    mongo_client = business_logic._management_service.mongo_client
+                    if mongo_client is not None and mongo_client.db is not None:
+                        # Prova a caricare la configurazione dal database
+                        config_dict = await mongo_client.db.sensor_configs.find_one({"name": sensor_name})
+                        if config_dict:
+                            # Rimuovi _id per creare SensorConfig
+                            config_dict.pop("_id", None)
+                            sensor_config = SensorConfig(**config_dict)
+                            
+                            # Aggiungi il sensore alla business logic
+                            success = await business_logic.add_sensor(sensor_config)
+                            if success:
+                                # Riprova a leggere i dati
+                                sensor_data = await business_logic.read_sensor_data(sensor_name)
+                                if sensor_data is not None:
+                                    return SensorDataResponse(
+                                        sensor_name=sensor_data.sensor_name,
+                                        data=sensor_data.data,
+                                        timestamp=sensor_data.timestamp,
+                                        status=sensor_data.status
+                                    )
+                                # Se il sensore è stato caricato ma non ha dati, aggiorna status_list
+                                status_list = await business_logic.get_sensor_status(sensor_name, check_connection=False)
+            except Exception as e:
+                print(f"Errore caricamento sensore {sensor_name} dal database: {e}")
+        
+        # Se ancora non esiste, restituisci 404
+        if not status_list:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Sensore '{sensor_name}' non trovato"
+            )
+        
+        # Se il sensore esiste ma non ha dati (es. MQTT senza messaggi ancora),
+        # restituisci una risposta vuota invece di 404
+        from app.models import SensorData
+        from datetime import datetime
+        sensor_data = SensorData(
+            sensor_name=sensor_name,
+            timestamp=datetime.now(),
+            data={},
+            status="ok",
+            error="Nessun dato disponibile ancora"
         )
     
     return SensorDataResponse(
@@ -130,6 +181,8 @@ async def create_sensor(
 ):
     """Crea un nuovo sensore"""
     from app.models import SensorConfig
+    from app.api.routes.frontend import _get_sensor_templates
+    import os
     
     # Verifica se il sensore esiste già
     if request.name in business_logic.sensors:
@@ -138,8 +191,34 @@ async def create_sensor(
             detail=f"Sensore '{request.name}' già esistente"
         )
     
+    # Prepara i dati della richiesta
+    request_data = request.model_dump()
+    
+    # Se è specificato un template_id, applica i default_config dal template
+    if request.template_id and request.template_id != "custom":
+        try:
+            templates = _get_sensor_templates()
+            template = next((t for t in templates if t["id"] == request.template_id), None)
+            
+            if template and "default_config" in template:
+                default_config = template["default_config"].copy()
+                print(f"Applicazione default_config dal template {request.template_id}: {default_config}")
+                
+                # Rimuovi 'type' se il protocollo è MQTT (type enum non supporta MQTT, si usa solo protocol)
+                if default_config.get("protocol") == "mqtt" and "type" in default_config:
+                    default_config.pop("type")
+                    print(f"  - Rimosso 'type' per protocollo MQTT (usare solo 'protocol')")
+                
+                # Applica i valori di default solo se non sono già specificati nella richiesta
+                for key, value in default_config.items():
+                    if key not in request_data or request_data[key] is None:
+                        request_data[key] = value
+                        print(f"  - Applicato {key} = {value}")
+        except Exception as e:
+            print(f"⚠ Errore nell'applicazione default_config dal template: {e}")
+    
     # Crea la configurazione
-    sensor_config = SensorConfig(**request.model_dump())
+    sensor_config = SensorConfig(**request_data)
     
     # Aggiungi il sensore
     success = await business_logic.add_sensor(sensor_config)

@@ -17,11 +17,14 @@ services:
       - "8000:8000"
     depends_on:
       - mongo
+      - mosquitto
     env_file:
       - .env.sensors  # Variabili generate da sensors.config.json
     environment:
       - MONGODB_URL=mongodb://mongo:27017/mydb
       - SENSOR_REGISTRY_URL=https://raw.githubusercontent.com/edoxb/smart-home-sensors/main
+      - MQTT_BROKER_HOST=mosquitto
+      - MQTT_BROKER_PORT=1883
       # ENABLED_SENSORS viene letto da .env.sensors
     volumes:
       - sensor_plugins:/app/plugins  # Cache plugin tra riavvii
@@ -39,9 +42,25 @@ services:
     networks:
       - smart_home_network
 
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: mosquitto
+    restart: always
+    ports:
+      - "1883:1883"    # Porta MQTT standard
+      - "9001:9001"    # Porta WebSocket MQTT (opzionale, per client web)
+    volumes:
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+      - ./mosquitto/config:/mosquitto/config:ro  # Configurazione (read-only)
+    networks:
+      - smart_home_network
+
 volumes:
   mongo_data:
   sensor_plugins:  # Volume per cache plugin sensori
+  mosquitto_data:  # Persistenza dati MQTT
+  mosquitto_log:   # Log Mosquitto
 
 networks:
   smart_home_network:

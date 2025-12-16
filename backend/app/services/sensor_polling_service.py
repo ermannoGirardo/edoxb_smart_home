@@ -22,12 +22,21 @@ class SensorPollingService:
         self._running = False
     
     async def start_polling(self) -> None:
-        """Avvia il polling di tutti i sensori abilitati"""
+        """Avvia il polling di tutti i sensori abilitati (salta quelli con poll_interval=None o 0, e sensori MQTT)"""
         self._running = True
         for name, sensor in self.sensors.items():
             if sensor.enabled:
-                task = asyncio.create_task(self._poll_sensor(name, sensor))
-                self._polling_tasks[name] = task
+                # Salta sensori MQTT (ricevono dati in tempo reale, non serve polling)
+                if sensor.protocol and hasattr(sensor.protocol, 'get_protocol_name'):
+                    protocol_name = sensor.protocol.get_protocol_name()
+                    if protocol_name == "MQTTProtocol":
+                        continue
+                
+                # Salta sensori senza polling (pulsanti, ecc.)
+                poll_interval = sensor.config.poll_interval
+                if poll_interval is not None and poll_interval > 0:
+                    task = asyncio.create_task(self._poll_sensor(name, sensor))
+                    self._polling_tasks[name] = task
         print(f"Avviato polling per {len(self._polling_tasks)} sensori")
     
     async def stop_polling(self) -> None:
@@ -41,7 +50,14 @@ class SensorPollingService:
     
     async def _poll_sensor(self, name: str, sensor: SensorBase) -> None:
         """Loop di polling per un singolo sensore"""
-        poll_interval = sensor.config.poll_interval or 5
+        poll_interval = sensor.config.poll_interval
+        
+        # Se poll_interval è None o 0, non fare polling (es. pulsanti)
+        if poll_interval is None or poll_interval == 0:
+            return
+        
+        # Default 5 secondi se non specificato
+        poll_interval = poll_interval or 5
         
         while self._running and sensor.enabled:
             try:
@@ -54,6 +70,13 @@ class SensorPollingService:
                         await self.mongo_client.save_sensor_data(sensor_data)
                 except Exception as e:
                     print(f"Errore salvataggio MongoDB per {name}: {e}")
+                
+                # Notifica AutomationService se presente
+                if hasattr(self, '_automation_service') and self._automation_service:
+                    try:
+                        await self._automation_service.on_sensor_data(name, sensor_data)
+                    except Exception as e:
+                        print(f"Errore automazione per {name}: {e}")
                 
                 # Pubblica su MQTT se disponibile
                 if self.mqtt_client and sensor_data.status == "ok":

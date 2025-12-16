@@ -18,8 +18,15 @@ RUN npm run build
 # Stage 2: Server Nginx per servire l'app buildata
 FROM nginx:alpine
 
+# Installa netcat per wait-for-backend.sh
+RUN apk add --no-cache netcat-openbsd
+
 # Copia la configurazione Nginx personalizzata
 COPY nginx.conf /etc/nginx/nginx.conf
+
+# Copia lo script di attesa
+COPY wait-for-backend.sh /wait-for-backend.sh
+RUN chmod +x /wait-for-backend.sh
 
 # Copia i file buildati dallo stage builder
 COPY --from=builder /app/dist /usr/share/nginx/html
@@ -31,6 +38,6 @@ COPY --from=builder /app/public/sensors.config.json /usr/share/nginx/html/sensor
 # Espone la porta 80
 EXPOSE 80
 
-# Avvia Nginx
-CMD ["nginx", "-g", "daemon off;"]
+# Avvia Nginx dopo aver aspettato il backend
+CMD ["sh", "-c", "/wait-for-backend.sh backend 8000 nginx -g 'daemon off;'"]
 

@@ -39,7 +39,7 @@ class PluginLoader:
             version: Versione del plugin (opzionale, default: 'latest')
         
         Returns:
-            True se il download è riuscito
+            True se il download è riuscito (almeno metadata o backend)
         """
         try:
             version = version or "latest"
@@ -50,38 +50,65 @@ class PluginLoader:
             
             # Verifica se il plugin è già scaricato (cache)
             backend_path = sensor_dir / f"{sensor_id}.py"
-            if backend_path.exists():
+            metadata_path = sensor_dir / "metadata.json"
+            
+            # Forza re-download del metadata per tutti i plugin abilitati (per assicurarsi di avere sempre la versione più recente)
+            enabled_sensors_str = os.getenv("ENABLED_SENSORS", "")
+            enabled_sensors = [s.strip() for s in enabled_sensors_str.split(",") if s.strip()]
+            if sensor_id in enabled_sensors and metadata_path.exists():
+                print(f"🔄 Forzato re-download metadata per {sensor_id} (aggiornamento metadata)")
+                metadata_path.unlink()  # Rimuovi cache per forzare re-download
+            
+            # Il metadata è ESSENZIALE, non usare cache se manca
+            if metadata_path.exists() and backend_path.exists():
                 print(f"✓ Plugin {sensor_id} già presente (cache)")
                 return True
-            
-            # Download file backend route
-            backend_url = f"{self.registry_url}/{sensor_id}/backend/{sensor_id}.py"
+            elif metadata_path.exists():
+                # Se il metadata esiste ma manca il backend, va bene (sensori MQTT puri)
+                print(f"✓ Plugin {sensor_id} già presente (solo metadata)")
+                return True
             
             async with aiohttp.ClientSession() as session:
-                async with session.get(backend_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                    if response.status == 200:
-                        content = await response.read()
-                        async with aiofiles.open(backend_path, 'wb') as f:
-                            await f.write(content)
-                        print(f"✓ Scaricato backend route per {sensor_id}")
-                    else:
-                        print(f"✗ Errore download backend route per {sensor_id}: HTTP {response.status}")
-                        return False
-                
-                # Download metadata (opzionale)
+                # Download metadata (ESSENZIALE per i template)
                 metadata_url = f"{self.registry_url}/{sensor_id}/metadata.json"
-                metadata_path = sensor_dir / "metadata.json"
+                metadata_downloaded = False
                 
                 try:
+                    print(f"🔍 Tentativo download metadata da: {metadata_url}")
                     async with session.get(metadata_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
                         if response.status == 200:
                             content = await response.read()
-                            async with aiofiles.open(metadata_path, 'wb') as f:
-                                await f.write(content)
-                except:
-                    pass  # Metadata opzionale
-            
-            return True
+                            # Verifica che il contenuto non sia vuoto
+                            if len(content) == 0:
+                                print(f"⚠ Metadata scaricato ma vuoto per {sensor_id}")
+                            else:
+                                async with aiofiles.open(metadata_path, 'wb') as f:
+                                    await f.write(content)
+                                print(f"✓ Scaricato metadata per {sensor_id} ({len(content)} bytes)")
+                                metadata_downloaded = True
+                        else:
+                            print(f"⚠ Metadata non trovato per {sensor_id}: HTTP {response.status} da {metadata_url}")
+                except Exception as e:
+                    print(f"⚠ Errore download metadata per {sensor_id}: {e}")
+                
+                # Download file backend route (opzionale - alcuni sensori MQTT non lo hanno)
+                if not backend_path.exists():
+                    backend_url = f"{self.registry_url}/{sensor_id}/backend/{sensor_id}.py"
+                    
+                    try:
+                        async with session.get(backend_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                            if response.status == 200:
+                                content = await response.read()
+                                async with aiofiles.open(backend_path, 'wb') as f:
+                                    await f.write(content)
+                                print(f"✓ Scaricato backend route per {sensor_id}")
+                            else:
+                                print(f"⚠ Backend route non trovato per {sensor_id}: HTTP {response.status} (può essere normale per sensori MQTT puri)")
+                    except Exception as e:
+                        print(f"⚠ Errore download backend route per {sensor_id}: {e}")
+                
+                # Il plugin è valido se almeno il metadata è stato scaricato
+                return metadata_downloaded
             
         except Exception as e:
             print(f"✗ Errore download plugin {sensor_id}: {e}")
@@ -160,22 +187,27 @@ class PluginLoader:
             
             print(f"  - Caricamento {sensor_id}...")
             
-            # Verifica se il plugin è già scaricato
+            # Verifica se il plugin è già scaricato (almeno metadata)
             sensor_dir = self.plugins_dir / sensor_id
-            if not sensor_dir.exists() or not (sensor_dir / f"{sensor_id}.py").exists():
+            metadata_path = sensor_dir / "metadata.json"
+            backend_path = sensor_dir / f"{sensor_id}.py"
+            
+            # Scarica il plugin se manca il metadata (essenziale) o il backend (opzionale)
+            if not sensor_dir.exists() or not metadata_path.exists() or not backend_path.exists():
                 print(f"    Download plugin {sensor_id}...")
                 success = await self.download_sensor_plugin(sensor_id)
                 if not success:
                     print(f"    ⚠ Impossibile scaricare plugin {sensor_id}, saltato")
                     continue
             
-            # Carica il router
+            # Carica il router (opzionale - alcuni sensori MQTT non hanno backend)
             router = self.load_sensor_router(sensor_id)
             if router:
                 routers.append((sensor_id, router))
-                print(f"    ✓ Plugin {sensor_id} caricato e registrato")
+                print(f"    ✓ Plugin {sensor_id} caricato e registrato (con router)")
             else:
-                print(f"    ✗ Impossibile caricare router per {sensor_id}")
+                # Router non disponibile è OK per sensori MQTT puri (hanno solo metadata)
+                print(f"    ✓ Plugin {sensor_id} caricato (solo metadata, senza router backend)")
         
         return routers
     
