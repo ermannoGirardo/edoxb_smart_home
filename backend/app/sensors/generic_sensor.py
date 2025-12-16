@@ -14,3 +14,8 @@ class GenericSensor(SensorBase):
             self.config.port = protocol.port
 
 
+
+
+
+
+

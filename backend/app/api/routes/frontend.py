@@ -261,7 +261,7 @@ async def get_websocket_sketch(logic_id: str):
 # ========== SENSOR TEMPLATES ==========
 
 def _get_sensor_templates() -> List[Dict[str, Any]]:
-    """Lista tutti i template di sensori disponibili (solo quelli abilitati)"""
+    """Lista tutti i template di sensori disponibili (solo quelli abilitati) - Caricati SOLO da GitHub"""
     import os
     from pathlib import Path
     
@@ -269,67 +269,76 @@ def _get_sensor_templates() -> List[Dict[str, Any]]:
     enabled_sensors_str = os.getenv("ENABLED_SENSORS", "")
     enabled_sensors = [s.strip() for s in enabled_sensors_str.split(",") if s.strip()]
     
-    # Template base disponibili
-    all_templates = {
-        "shelly_rgbw2": {
-            "id": "shelly_rgbw2",
-            "name": "Shelly RGBW2",
-            "description": "Controller LED RGBW con controllo colore e luminosità",
-            "protocol": "http",
-            "required_fields": ["name", "ip"],
-            "optional_fields": [],
-            "default_config": {
-                "protocol": "http",
-                "enabled": True,
-                "type": "http"
-            },
-            "control_interface": "shelly_rgbw2"
-        },
-        "shelly_dimmer2": {
-            "id": "shelly_dimmer2",
-            "name": "Shelly Dimmer 2",
-            "description": "Dimmer per controllo luminosità luce dimmerabile",
-            "protocol": "http",
-            "required_fields": ["name", "ip"],
-            "optional_fields": [],
-            "default_config": {
-                "protocol": "http",
-                "enabled": True,
-                "type": "http"
-            },
-            "control_interface": "shelly_dimmer2"
-        }
-    }
-    
-    # Carica metadata dai plugin scaricati (se disponibili)
+    # Carica metadata SOLO dai plugin scaricati da GitHub (nessun template hardcoded)
+    all_templates = {}
     plugins_dir = Path("/app/plugins")
-    for sensor_id in enabled_sensors:
-        if sensor_id not in all_templates:
-            # Prova a caricare metadata dal plugin
-            metadata_path = plugins_dir / sensor_id / "metadata.json"
-            if metadata_path.exists():
-                try:
-                    import json
-                    with open(metadata_path, 'r') as f:
-                        metadata = json.load(f)
-                        all_templates[sensor_id] = {
-                            "id": metadata.get("id", sensor_id),
-                            "name": metadata.get("name", sensor_id.replace("_", " ").title()),
-                            "description": metadata.get("description", ""),
-                            "protocol": metadata.get("protocol", "http"),
-                            "required_fields": metadata.get("required_fields", ["name", "ip"]),
-                            "optional_fields": metadata.get("optional_fields", []),
-                            "default_config": {
-                                "protocol": metadata.get("protocol", "http"),
-                                "enabled": True,
-                                "type": metadata.get("protocol", "http")
-                            },
-                            "control_interface": metadata.get("template_id", sensor_id)
-                        }
-                except:
-                    pass
     
-    # Restituisce solo i template dei sensori abilitati
+    for sensor_id in enabled_sensors:
+        # Prova a caricare metadata dal plugin scaricato
+        metadata_path = plugins_dir / sensor_id / "metadata.json"
+        if metadata_path.exists():
+            try:
+                import json
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                    default_config = metadata.get("default_config", {}).copy()  # Copia per non modificare l'originale
+                    # Rimuovi template_id dal default_config se presente (non deve essere nel default_config)
+                    default_config.pop("template_id", None)
+                    # Aggiungi topic MQTT se definiti nei metadata
+                    if metadata.get("protocol") == "mqtt":
+                        # Prima prova a leggere direttamente da metadata
+                        if "mqtt_topic_status" in metadata:
+                            default_config["mqtt_topic_status"] = metadata["mqtt_topic_status"]
+                            print(f"  ✓ Aggiunto mqtt_topic_status al default_config: {metadata['mqtt_topic_status']}")
+                        elif "mqtt_topics" in metadata and "events" in metadata["mqtt_topics"]:
+                            # Fallback: costruisci da mqtt_topics se presente
+                            events_topic = metadata["mqtt_topics"]["events"]
+                            # Sostituisci <topic_prefix> con il pattern corretto per Shelly Pro 50EM
+                            if "<topic_prefix>" in events_topic:
+                                default_config["mqtt_topic_status"] = events_topic.replace("<topic_prefix>", "shellyproem50-{device_id}")
+                                print(f"  ✓ Costruito mqtt_topic_status da mqtt_topics: {default_config['mqtt_topic_status']}")
+                        
+                        if "mqtt_topic_command" in metadata:
+                            default_config["mqtt_topic_command"] = metadata["mqtt_topic_command"]
+                            print(f"  ✓ Aggiunto mqtt_topic_command al default_config: {metadata['mqtt_topic_command']}")
+                        elif "mqtt_topics" in metadata and "rpc" in metadata["mqtt_topics"]:
+                            # Fallback: costruisci da mqtt_topics se presente
+                            rpc_topic = metadata["mqtt_topics"]["rpc"]
+                            if "<topic_prefix>" in rpc_topic:
+                                default_config["mqtt_topic_command"] = rpc_topic.replace("<topic_prefix>", "shellyproem50-{device_id}")
+                                print(f"  ✓ Costruito mqtt_topic_command da mqtt_topics: {default_config['mqtt_topic_command']}")
+                    
+                    # Usa sempre sensor_id come id del template (non metadata.get("id"))
+                    # per evitare problemi con metadata vecchi che hanno id diversi
+                    template_id_from_metadata = metadata.get("template_id", sensor_id)
+                    print(f"📋 Template {sensor_id}: metadata.id={metadata.get('id')}, metadata.template_id={template_id_from_metadata}, usando sensor_id={sensor_id} come id template")
+                    
+                    # Costruisci default_config: prima i valori base, poi quelli dal metadata (che possono sovrascriverli)
+                    final_default_config = {
+                        "protocol": metadata.get("protocol", "http"),
+                        "enabled": True,
+                        "type": metadata.get("protocol", "http"),
+                    }
+                    # Aggiungi i valori dal default_config del metadata (possono sovrascrivere i valori base)
+                    final_default_config.update(default_config)
+                    print(f"  📦 default_config finale per {sensor_id}: {final_default_config}")
+                    
+                    all_templates[sensor_id] = {
+                        "id": sensor_id,  # Usa sempre sensor_id, non metadata.get("id")
+                        "name": metadata.get("name", sensor_id.replace("_", " ").title()),
+                        "description": metadata.get("description", ""),
+                        "protocol": metadata.get("protocol", "http"),
+                        "required_fields": metadata.get("required_fields", ["name", "ip"]),
+                        "optional_fields": metadata.get("optional_fields", []),
+                        "default_config": final_default_config,  # Include topic MQTT se presenti
+                        "control_interface": template_id_from_metadata
+                    }
+            except Exception as e:
+                print(f"⚠ Errore caricamento metadata per {sensor_id}: {e}")
+        else:
+            print(f"⚠ Metadata non trovato per {sensor_id} (plugin non scaricato da GitHub)")
+    
+    # Restituisce solo i template dei sensori abilitati che hanno metadata
     templates = []
     for sensor_id in enabled_sensors:
         if sensor_id in all_templates:
