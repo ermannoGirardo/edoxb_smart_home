@@ -64,21 +64,21 @@ class SensorPollingService:
                 # Leggi i dati dal sensore
                 sensor_data = await sensor.read_data()
                 
-                # Salva in MongoDB
+                # Salva sempre in MongoDB (rimosso il limite di tempo)
                 try:
                     if self.mongo_client is not None:
                         await self.mongo_client.save_sensor_data(sensor_data)
                 except Exception as e:
                     print(f"Errore salvataggio MongoDB per {name}: {e}")
                 
-                # Notifica AutomationService se presente
+                # Notifica AutomationService se presente (sempre, non solo quando salvi)
                 if hasattr(self, '_automation_service') and self._automation_service:
                     try:
                         await self._automation_service.on_sensor_data(name, sensor_data)
                     except Exception as e:
                         print(f"Errore automazione per {name}: {e}")
                 
-                # Pubblica su MQTT se disponibile
+                # Pubblica su MQTT se disponibile (sempre, non solo quando salvi)
                 if self.mqtt_client and sensor_data.status == "ok":
                     try:
                         await self.mqtt_client.publish_sensor_data(sensor_data)

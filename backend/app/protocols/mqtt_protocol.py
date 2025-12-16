@@ -70,6 +70,10 @@ class MQTTProtocol(ProtocolBase):
         self._aggregated_data: Dict[str, Any] = {}  # Per aggregare dati da topic multipli (wildcard)
         self._message_callbacks: list[Callable] = []
         self._subscription_task: Optional[asyncio.Task] = None
+        self._save_task: Optional[asyncio.Task] = None  # Task per debounce salvataggio MongoDB
+        self._save_lock = asyncio.Lock()  # Lock per evitare race condition nel salvataggio
+        self._data_lock = asyncio.Lock()  # Lock per garantire consistenza di _last_data e _aggregated_data
+        self._last_message_time: Optional[datetime] = None  # Timestamp dell'ultimo messaggio ricevuto
     
     async def connect(self) -> bool:
         """Si connette al broker MQTT e si sottoscrive al topic di stato"""
@@ -121,9 +125,69 @@ class MQTTProtocol(ProtocolBase):
             self.connected = False
             return False
     
+    async def clear_retained_messages(self) -> None:
+        """Pulisce i messaggi retained pubblicando payload vuoti"""
+        if not self._mqtt_client or not self.connected:
+            return
+        
+        try:
+            # Se il topic è un wildcard, dobbiamo pulire tutti i sottotopic
+            if self.is_wildcard_topic:
+                # Per wildcard, pubblica un messaggio vuoto sul topic base e sui sottotopic comuni
+                base_topic = self.topic_status.replace('/#', '').replace('/+', '')
+                
+                # Pulisci il topic base
+                await self._mqtt_client.publish(
+                    base_topic,
+                    payload=b'',
+                    qos=1,
+                    retain=True
+                )
+                
+                # Pulisci anche i topic comuni per growbox (se applicabile)
+                if 'growbox' in base_topic.lower() or 'grow box' in base_topic.lower():
+                    # Pulisci i topic dei sensori comuni
+                    sensor_topics = [
+                        f"{base_topic}/temperature_1",
+                        f"{base_topic}/temperature_2",
+                        f"{base_topic}/temperature_3",
+                        f"{base_topic}/temperature_4",
+                        f"{base_topic}/humidity_1",
+                        f"{base_topic}/humidity_2",
+                        f"{base_topic}/humidity_3",
+                        f"{base_topic}/humidity_4",
+                        f"{base_topic}/water_level"
+                    ]
+                    for topic in sensor_topics:
+                        try:
+                            await self._mqtt_client.publish(
+                                topic,
+                                payload=b'',
+                                qos=1,
+                                retain=True
+                            )
+                        except Exception as e:
+                            print(f"⚠ Errore pulizia topic {topic}: {e}")
+                
+                print(f"🧹 Puliti messaggi retained per sensore {self.name} su {base_topic} e sottotopic")
+            else:
+                # Per topic normale, pulisci direttamente
+                await self._mqtt_client.publish(
+                    self.topic_status,
+                    payload=b'',
+                    qos=1,
+                    retain=True
+                )
+                print(f"🧹 Puliti messaggi retained per sensore {self.name} su {self.topic_status}")
+        except Exception as e:
+            print(f"⚠ Errore pulizia messaggi retained per {self.name}: {e}")
+    
     async def disconnect(self) -> None:
         """Disconnette dal broker MQTT"""
         try:
+            # Pulisci messaggi retained prima di disconnettere
+            await self.clear_retained_messages()
+            
             if self._subscription_task:
                 self._subscription_task.cancel()
                 try:
@@ -205,23 +269,31 @@ class MQTTProtocol(ProtocolBase):
                     # Parse del messaggio
                     topic = str(message.topic)
                     
-                    # Log per debug (solo per sensore energia)
-                    if self.name == "energia":
-                        print(f"🔍 Sensore {self.name}: Messaggio MQTT ricevuto su topic: {topic}")
-                        print(f"   Topic atteso: {self.topic_status}")
-                        print(f"   Match: {self._topic_matches(topic, self.topic_status)}")
+                    # Verifica se il messaggio è retained e se il sensore è offline
+                    is_retained = getattr(message, 'retain', False)
+                    if is_retained:
+                        # Calcola il tempo trascorso dall'ultimo aggiornamento
+                        time_since_last_update = (datetime.now() - self.last_update).total_seconds()
+                        
+                        # Se non abbiamo ricevuto messaggi recenti (più di 60 secondi), ignora i retained
+                        # Questo evita di mostrare dati vecchi quando il sensore è offline
+                        if time_since_last_update > 60:
+                            print(f"⚠ Sensore {self.name}: Ignorato messaggio retained su {topic} (sensore offline da {time_since_last_update:.1f}s)")
+                            continue
+                        else:
+                            # Messaggio retained ma sensore ancora attivo (probabilmente primo messaggio dopo connessione)
+                            print(f"ℹ Sensore {self.name}: Ricevuto messaggio retained su {topic} (sensore attivo)")
                     
                     # Verifica se il topic corrisponde al pattern (supporta wildcard)
                     if not self._topic_matches(topic, self.topic_status):
-                        if self.name == "energia":
-                            print(f"   ⚠ Topic non corrisponde, messaggio ignorato")
+                        # Non loggare messaggi non corrispondenti (comportamento normale con client MQTT condiviso)
                         continue
                     
                     # Prova a parsare come JSON, altrimenti come valore semplice
                     try:
                         payload = json.loads(message.payload.decode())
-                        # Log dettagliato per debug (solo per primi messaggi o se contiene dati interessanti)
-                        if self.name == "energia" or (isinstance(payload, dict) and ("method" in payload or "em1" in str(payload))):
+                        # Log dettagliato solo per altri sensori (non per energia che riceve messaggi molto frequenti e voluminosi)
+                        if self.name != "energia" and (isinstance(payload, dict) and ("method" in payload or "em1" in str(payload))):
                             print(f"📨 Sensore {self.name}: Messaggio MQTT ricevuto su {topic}")
                             print(f"   Payload (primi 500 char): {json.dumps(payload, indent=2)[:500]}")
                     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -243,13 +315,15 @@ class MQTTProtocol(ProtocolBase):
                         # Estrai il tipo di dato dal topic (es: 'temperature' da '.../sensor/temperature')
                         data_type, _ = self._extract_data_from_topic(topic)
                         
-                        # Aggrega nel dict
-                        if not hasattr(self, '_aggregated_data'):
-                            self._aggregated_data = {}
-                        self._aggregated_data[data_type] = payload
-                        
-                        # Aggiorna _last_data con tutti i dati aggregati
-                        self._last_data = self._aggregated_data.copy()
+                        # Aggrega nel dict con lock per garantire consistenza
+                        async with self._data_lock:
+                            if not hasattr(self, '_aggregated_data'):
+                                self._aggregated_data = {}
+                            self._aggregated_data[data_type] = payload
+                            
+                            # Aggiorna _last_data con tutti i dati aggregati (copia profonda)
+                            self._last_data = self._aggregated_data.copy()
+                            self._last_message_time = datetime.now()
                         
                         print(f"Sensore {self.name}: Ricevuto messaggio MQTT su {topic} (tipo: {data_type}): {payload}")
                         print(f"  Dati aggregati: {self._aggregated_data}")
@@ -268,14 +342,33 @@ class MQTTProtocol(ProtocolBase):
                         status="ok"
                     )
                     
-                    # Salva immediatamente in MongoDB se disponibile
-                    if self.__class__._mongo_client:
-                        try:
-                            await self.__class__._mongo_client.save_sensor_data(sensor_data)
-                        except Exception as e:
-                            print(f"Errore salvataggio MongoDB MQTT per {self.name}: {e}")
+                    # Salvataggio con debounce: aspetta 500ms dopo l'ultimo messaggio prima di salvare
+                    # Questo permette a tutti i messaggi di aggregarsi prima del salvataggio
+                    async def save_with_debounce():
+                        await asyncio.sleep(0.5)  # Aspetta 500ms
+                        async with self._save_lock:
+                            # Verifica che _last_data non sia cambiato durante l'attesa
+                            if self._last_data is not None:
+                                final_sensor_data = SensorData(
+                                    sensor_name=self.name,
+                                    timestamp=datetime.now(),
+                                    data=self._last_data,
+                                    status="ok"
+                                )
+                                if self.__class__._mongo_client:
+                                    try:
+                                        await self.__class__._mongo_client.save_sensor_data(final_sensor_data)
+                                    except Exception as e:
+                                        print(f"Errore salvataggio MongoDB MQTT per {self.name}: {e}")
                     
-                    # Notifica AutomationService se presente (stampa log immediatamente)
+                    # Cancella il task precedente se esiste
+                    if self._save_task and not self._save_task.done():
+                        self._save_task.cancel()
+                    
+                    # Avvia nuovo task con debounce
+                    self._save_task = asyncio.create_task(save_with_debounce())
+                    
+                    # Notifica AutomationService immediatamente (non aspetta il debounce)
                     if self.__class__._automation_service:
                         try:
                             await self.__class__._automation_service.on_sensor_data(self.name, sensor_data)
@@ -304,21 +397,27 @@ class MQTTProtocol(ProtocolBase):
     
     async def read_data(self) -> SensorData:
         """Legge l'ultimo dato ricevuto via MQTT (aggregato se wildcard topic)"""
-        if self._last_data is not None:
-            return SensorData(
-                sensor_name=self.name,
-                timestamp=datetime.now(),
-                data=self._last_data,
-                status="ok"
-            )
-        else:
-            return SensorData(
-                sensor_name=self.name,
-                timestamp=datetime.now(),
-                data={},
-                status="ok",
-                error="Nessun dato disponibile"
-            )
+        # Restituisci immediatamente i dati disponibili (non aspettare)
+        # Il frontend ha polling adattivo che si aggiorna velocemente quando ci sono nuovi dati
+        # Questo evita di bloccare la richiesta HTTP e riduce la latenza
+        async with self._data_lock:
+            if self._last_data is not None:
+                # Crea una copia profonda per evitare modifiche concorrenti
+                data_copy = self._last_data.copy()
+                return SensorData(
+                    sensor_name=self.name,
+                    timestamp=datetime.now(),
+                    data=data_copy,
+                    status="ok"
+                )
+            else:
+                return SensorData(
+                    sensor_name=self.name,
+                    timestamp=datetime.now(),
+                    data={},
+                    status="ok",
+                    error="Nessun dato disponibile"
+                )
     
     async def is_connected(self) -> bool:
         """Verifica se la connessione MQTT è attiva"""

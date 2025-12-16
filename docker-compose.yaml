@@ -28,6 +28,7 @@ services:
       # ENABLED_SENSORS viene letto da .env.sensors
     volumes:
       - sensor_plugins:/app/plugins  # Cache plugin tra riavvii
+      - ./backup:/app/backup  # Directory per backup giornalieri
     networks:
       - smart_home_network
 

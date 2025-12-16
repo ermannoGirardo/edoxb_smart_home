@@ -122,6 +122,7 @@ async def lifespan(app: FastAPI):
     # Crea AutomationService
     from app.services.automation_service import AutomationService
     automation_service = AutomationService(business_logic)
+    automation_service._mongo_client = mongo_client  # Collega MongoDB per leggere la fase
     
     # Collega AutomationService al polling service
     business_logic._polling_service._automation_service = automation_service
