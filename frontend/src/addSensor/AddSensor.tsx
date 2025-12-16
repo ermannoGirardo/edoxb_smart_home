@@ -123,11 +123,13 @@ export default function AddSensor({ onCancel, onSuccess }: AddSensorProps) {
       setShowTemplateSelection(false)
       
       // Inizializza formData con i default del template, includendo template_id
+      // Rimuovi template_id dal default_config se presente (per evitare conflitti)
+      const { template_id: _, ...defaultConfigWithoutTemplateId } = templateConfig.default_config || {}
       const initialData: Record<string, any> = {
-        ...templateConfig.default_config,
+        ...defaultConfigWithoutTemplateId,
         type: templateConfig.protocol,
         protocol: templateConfig.protocol,  // Assicura che protocol sia impostato
-        template_id: templateId  // Salva l'ID del template
+        template_id: templateId  // Salva l'ID del template (sempre dal templateId selezionato, non dal default_config)
       }
       setFormData(initialData)
       setShowForm(true)

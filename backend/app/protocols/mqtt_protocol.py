@@ -8,10 +8,12 @@ from app.models import SensorConfig, SensorData
 
 try:
     from aiomqtt import Client as MQTTClient
+    from aiomqtt.exceptions import MqttReentrantError
     MQTT_AVAILABLE = True
 except ImportError:
     MQTT_AVAILABLE = False
     MQTTClient = None
+    MqttReentrantError = None
 
 
 class MQTTProtocol(ProtocolBase):
@@ -21,6 +23,7 @@ class MQTTProtocol(ProtocolBase):
     _mqtt_client: Optional[MQTTClient] = None
     _mqtt_client_lock = asyncio.Lock()
     _mqtt_client_connected = False  # Flag per tracciare se il client è connesso
+    _connected_sensors_count = 0  # Contatore sensori MQTT connessi
     _mongo_client = None  # Riferimento a MongoDB per salvare dati immediatamente
     _automation_service = None  # Riferimento ad AutomationService
     
@@ -83,9 +86,13 @@ class MQTTProtocol(ProtocolBase):
                         await self._mqtt_client.__aenter__()
                         self._mqtt_client_connected = True
                         print(f"Client MQTT connesso a {self.broker_host}:{self.broker_port}")
-                    except RuntimeError as e:
-                        # Se il client è già nel context (RuntimeError: "Already entered")
-                        if "already entered" in str(e).lower() or "already" in str(e).lower():
+                    except (RuntimeError, MqttReentrantError) as e:
+                        # Se il client è già nel context (MqttReentrantError o RuntimeError: "Already entered")
+                        if MqttReentrantError and isinstance(e, MqttReentrantError):
+                            # Client già nel context manager (connesso da un altro sensore)
+                            self._mqtt_client_connected = True
+                            print(f"Client MQTT già connesso (reentrant) a {self.broker_host}:{self.broker_port}")
+                        elif "already entered" in str(e).lower() or "already" in str(e).lower():
                             self._mqtt_client_connected = True
                             print(f"Client MQTT già connesso a {self.broker_host}:{self.broker_port}")
                         else:
@@ -97,6 +104,11 @@ class MQTTProtocol(ProtocolBase):
             
             # Avvia task per ricevere messaggi
             self._subscription_task = asyncio.create_task(self._message_loop())
+            
+            # Incrementa contatore sensori connessi
+            async with self._mqtt_client_lock:
+                self._connected_sensors_count += 1
+                print(f"📊 Sensori MQTT connessi: {self._connected_sensors_count}")
             
             self.connected = True
             self.update_last_update()
@@ -125,6 +137,21 @@ class MQTTProtocol(ProtocolBase):
                     await self._mqtt_client.unsubscribe(self.topic_status)
                 except:
                     pass
+            
+            # Decrementa contatore sensori connessi
+            async with self._mqtt_client_lock:
+                if self._connected_sensors_count > 0:
+                    self._connected_sensors_count -= 1
+                print(f"📊 Sensori MQTT connessi: {self._connected_sensors_count}")
+                
+                # Se non ci sono più sensori connessi, chiudi la connessione MQTT condivisa
+                if self._connected_sensors_count == 0 and self._mqtt_client_connected:
+                    try:
+                        await self._mqtt_client.__aexit__(None, None, None)
+                        self._mqtt_client_connected = False
+                        print(f"🔌 Connessione MQTT condivisa chiusa (nessun sensore connesso)")
+                    except Exception as e:
+                        print(f"⚠ Errore chiusura connessione MQTT condivisa: {e}")
             
             self.connected = False
             print(f"Disconnesso MQTT per sensore {self.name}")
@@ -178,13 +205,25 @@ class MQTTProtocol(ProtocolBase):
                     # Parse del messaggio
                     topic = str(message.topic)
                     
+                    # Log per debug (solo per sensore energia)
+                    if self.name == "energia":
+                        print(f"🔍 Sensore {self.name}: Messaggio MQTT ricevuto su topic: {topic}")
+                        print(f"   Topic atteso: {self.topic_status}")
+                        print(f"   Match: {self._topic_matches(topic, self.topic_status)}")
+                    
                     # Verifica se il topic corrisponde al pattern (supporta wildcard)
                     if not self._topic_matches(topic, self.topic_status):
+                        if self.name == "energia":
+                            print(f"   ⚠ Topic non corrisponde, messaggio ignorato")
                         continue
                     
                     # Prova a parsare come JSON, altrimenti come valore semplice
                     try:
                         payload = json.loads(message.payload.decode())
+                        # Log dettagliato per debug (solo per primi messaggi o se contiene dati interessanti)
+                        if self.name == "energia" or (isinstance(payload, dict) and ("method" in payload or "em1" in str(payload))):
+                            print(f"📨 Sensore {self.name}: Messaggio MQTT ricevuto su {topic}")
+                            print(f"   Payload (primi 500 char): {json.dumps(payload, indent=2)[:500]}")
                     except (json.JSONDecodeError, UnicodeDecodeError):
                         # Se non è JSON, prova come valore numerico o stringa
                         payload_str = message.payload.decode()
@@ -215,7 +254,8 @@ class MQTTProtocol(ProtocolBase):
                         print(f"Sensore {self.name}: Ricevuto messaggio MQTT su {topic} (tipo: {data_type}): {payload}")
                         print(f"  Dati aggregati: {self._aggregated_data}")
                     else:
-                        # Topic normale, usa il payload direttamente
+                        # Topic normale, usa il payload direttamente (raw, senza processamento)
+                        # Il processamento specifico del plugin verrà fatto nel plugin stesso
                         self._last_data = payload if isinstance(payload, dict) else {"value": payload}
                     
                     self.update_last_update()

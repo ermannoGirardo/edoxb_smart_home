@@ -177,7 +177,9 @@ class SensorUpdateRequest(BaseModel):
     enabled: Optional[bool] = Field(None, description="Se il sensore è abilitato")
     poll_interval: Optional[int] = Field(None, description="Intervallo di polling in secondi")
     timeout: Optional[int] = Field(None, description="Timeout in secondi", gt=0)
+    template_id: Optional[str] = Field(None, description="ID del template usato per creare il sensore (es: 'shelly_rgbw2', 'arduino_grow_box', 'custom')")
     # Campi MQTT (opzionali, definiti dal plugin del sensore)
+    device_id: Optional[str] = Field(None, description="ID del dispositivo (es: per Shelly H&T: 'ABC123'). Usato per sostituire {device_id} nei topic MQTT")
     mqtt_topic_status: Optional[str] = Field(None, description="Topic MQTT per ricevere aggiornamenti di stato (es: 'shellies/shelly_rgbw2_XXXXXX/status'). Se non specificato, usa 'sensors/{name}/status'")
     mqtt_topic_command: Optional[str] = Field(None, description="Topic MQTT per inviare comandi (es: 'shellies/shelly_rgbw2_XXXXXX/command'). Se non specificato, usa 'sensors/{name}/command'")
 

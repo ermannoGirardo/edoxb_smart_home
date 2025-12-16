@@ -42,6 +42,7 @@ function App() {
         
         // Usa import.meta.glob per pre-caricare tutti i componenti disponibili (Vite lo risolve a build time)
         const componentModules = import.meta.glob('./sensorCard/*.tsx', { eager: false }) as Record<string, () => Promise<{ default: ComponentType<SensorControlProps> }>>
+        console.log('📁 File trovati nel glob:', Object.keys(componentModules))
         
         // Lazy load solo i componenti abilitati - OTTIMIZZATO: carica solo il componente necessario
         config.enabled_sensors?.forEach((sensorId: string) => {
@@ -87,6 +88,8 @@ function App() {
               )
             } else {
               console.warn(`⚠ Componente ${componentName} non trovato nel glob (path: ${componentPath})`)
+              console.warn(`   File disponibili nel glob:`, Object.keys(componentModules))
+              console.warn(`   Cercato: ${componentPath}`)
             }
           } else {
             console.warn(`⚠ Sensore ${sensorId} senza componente specificato`)
@@ -266,8 +269,16 @@ function App() {
                     key={sensor.name}
                     onClick={() => {
                       // Se il sensore ha un template_id, apri fullscreen
+                      console.log('🔍 Click su sensore:', sensor.name, 'template_id:', sensor.template_id, 'componenti disponibili:', Object.keys(sensorComponents))
                       if (sensor.template_id && sensorComponents[sensor.template_id]) {
                         setFullscreenSensor(sensor.name)
+                      } else {
+                        console.warn('⚠️ Sensore non cliccabile:', {
+                          name: sensor.name,
+                          template_id: sensor.template_id,
+                          hasComponent: sensor.template_id ? !!sensorComponents[sensor.template_id] : false,
+                          availableComponents: Object.keys(sensorComponents)
+                        })
                       }
                     }}
                     className="backdrop-blur-lg rounded-lg shadow-xl p-4 hover:shadow-lg transition-all duration-150 border-2"

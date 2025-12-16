@@ -181,6 +181,8 @@ async def create_sensor(
 ):
     """Crea un nuovo sensore"""
     from app.models import SensorConfig
+    from app.api.routes.frontend import _get_sensor_templates
+    import os
     
     # Verifica se il sensore esiste già
     if request.name in business_logic.sensors:
@@ -189,8 +191,34 @@ async def create_sensor(
             detail=f"Sensore '{request.name}' già esistente"
         )
     
+    # Prepara i dati della richiesta
+    request_data = request.model_dump()
+    
+    # Se è specificato un template_id, applica i default_config dal template
+    if request.template_id and request.template_id != "custom":
+        try:
+            templates = _get_sensor_templates()
+            template = next((t for t in templates if t["id"] == request.template_id), None)
+            
+            if template and "default_config" in template:
+                default_config = template["default_config"].copy()
+                print(f"Applicazione default_config dal template {request.template_id}: {default_config}")
+                
+                # Rimuovi 'type' se il protocollo è MQTT (type enum non supporta MQTT, si usa solo protocol)
+                if default_config.get("protocol") == "mqtt" and "type" in default_config:
+                    default_config.pop("type")
+                    print(f"  - Rimosso 'type' per protocollo MQTT (usare solo 'protocol')")
+                
+                # Applica i valori di default solo se non sono già specificati nella richiesta
+                for key, value in default_config.items():
+                    if key not in request_data or request_data[key] is None:
+                        request_data[key] = value
+                        print(f"  - Applicato {key} = {value}")
+        except Exception as e:
+            print(f"⚠ Errore nell'applicazione default_config dal template: {e}")
+    
     # Crea la configurazione
-    sensor_config = SensorConfig(**request.model_dump())
+    sensor_config = SensorConfig(**request_data)
     
     # Aggiungi il sensore
     success = await business_logic.add_sensor(sensor_config)

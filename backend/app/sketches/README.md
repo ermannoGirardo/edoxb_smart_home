@@ -203,3 +203,8 @@ Il backend espone queste API per gestire gli sketch:
 - **Timestamp**: Usa formato ISO 8601: `datetime.now().isoformat()`
 
 
+
+
+
+
+

@@ -52,6 +52,13 @@ class PluginLoader:
             backend_path = sensor_dir / f"{sensor_id}.py"
             metadata_path = sensor_dir / "metadata.json"
             
+            # Forza re-download del metadata per tutti i plugin abilitati (per assicurarsi di avere sempre la versione più recente)
+            enabled_sensors_str = os.getenv("ENABLED_SENSORS", "")
+            enabled_sensors = [s.strip() for s in enabled_sensors_str.split(",") if s.strip()]
+            if sensor_id in enabled_sensors and metadata_path.exists():
+                print(f"🔄 Forzato re-download metadata per {sensor_id} (aggiornamento metadata)")
+                metadata_path.unlink()  # Rimuovi cache per forzare re-download
+            
             # Il metadata è ESSENZIALE, non usare cache se manca
             if metadata_path.exists() and backend_path.exists():
                 print(f"✓ Plugin {sensor_id} già presente (cache)")
