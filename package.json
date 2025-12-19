@@ -9,7 +9,8 @@
     "docker:up": "npm run generate-env && npm run prepare-frontend && docker-compose up",
     "docker:build": "npm run generate-env && npm run prepare-frontend && docker-compose up --build",
     "docker:build:no-cache": "npm run generate-env && npm run prepare-frontend && docker-compose build --no-cache && docker-compose up",
-    "docker:down": "docker-compose down"
+    "docker:down": "docker-compose down",
+    "backend:reset-plugin": "docker exec backend rm /app/plugins/arduino_grow_box/arduino_grow_box.py && docker-compose restart backend"
   },
   "devDependencies": {}
 }

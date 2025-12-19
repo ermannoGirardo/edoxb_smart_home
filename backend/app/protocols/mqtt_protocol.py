@@ -65,14 +65,18 @@ class MQTTProtocol(ProtocolBase):
         self.broker_host = os.getenv("MQTT_BROKER_HOST", "mosquitto")
         self.broker_port = int(os.getenv("MQTT_BROKER_PORT", "1883"))
         
-        # Stato
+        # Stato in RAM per il sensore
+        self._ram_state: Dict[str, Any] = {}  # Stato completo in RAM con tutti i valori
+        self._ram_state_timestamp: Optional[datetime] = None  # Timestamp dell'ultimo aggiornamento dello stato
+        
+        # Stato legacy (mantenuto per compatibilità)
         self._last_data: Optional[Dict[str, Any]] = None
         self._aggregated_data: Dict[str, Any] = {}  # Per aggregare dati da topic multipli (wildcard)
         self._message_callbacks: list[Callable] = []
         self._subscription_task: Optional[asyncio.Task] = None
-        self._save_task: Optional[asyncio.Task] = None  # Task per debounce salvataggio MongoDB
+        self._periodic_save_task: Optional[asyncio.Task] = None  # Task periodico per salvare nel DB ogni 10 secondi
         self._save_lock = asyncio.Lock()  # Lock per evitare race condition nel salvataggio
-        self._data_lock = asyncio.Lock()  # Lock per garantire consistenza di _last_data e _aggregated_data
+        self._data_lock = asyncio.Lock()  # Lock per garantire consistenza dello stato in RAM
         self._last_message_time: Optional[datetime] = None  # Timestamp dell'ultimo messaggio ricevuto
     
     async def connect(self) -> bool:
@@ -108,6 +112,9 @@ class MQTTProtocol(ProtocolBase):
             
             # Avvia task per ricevere messaggi
             self._subscription_task = asyncio.create_task(self._message_loop())
+            
+            # Avvia task periodico per salvare nel DB ogni 10 secondi
+            self._periodic_save_task = asyncio.create_task(self._periodic_save_loop())
             
             # Incrementa contatore sensori connessi
             async with self._mqtt_client_lock:
@@ -195,6 +202,13 @@ class MQTTProtocol(ProtocolBase):
                 except asyncio.CancelledError:
                     pass
             
+            if self._periodic_save_task:
+                self._periodic_save_task.cancel()
+                try:
+                    await self._periodic_save_task
+                except asyncio.CancelledError:
+                    pass
+            
             if self._mqtt_client:
                 # Unsubscribe dal topic
                 try:
@@ -273,11 +287,15 @@ class MQTTProtocol(ProtocolBase):
                     is_retained = getattr(message, 'retain', False)
                     if is_retained:
                         # Calcola il tempo trascorso dall'ultimo aggiornamento
-                        time_since_last_update = (datetime.now() - self.last_update).total_seconds()
+                        time_since_last_update = (datetime.now() - self.last_update).total_seconds() if self.last_update else float('inf')
                         
-                        # Se non abbiamo ricevuto messaggi recenti (più di 60 secondi), ignora i retained
-                        # Questo evita di mostrare dati vecchi quando il sensore è offline
-                        if time_since_last_update > 60:
+                        # Se lo stato in RAM è vuoto, accetta sempre i messaggi retained (prima connessione)
+                        # Altrimenti, se non abbiamo ricevuto messaggi recenti (più di 60 secondi), ignora i retained
+                        if not self._ram_state and not self._ram_state_timestamp:
+                            # Stato vuoto: accetta i retained per inizializzare lo stato
+                            print(f"ℹ Sensore {self.name}: Accettato messaggio retained su {topic} (inizializzazione stato)")
+                        elif time_since_last_update > 60:
+                            # Sensore offline: ignora i retained per evitare dati vecchi
                             print(f"⚠ Sensore {self.name}: Ignorato messaggio retained su {topic} (sensore offline da {time_since_last_update:.1f}s)")
                             continue
                         else:
@@ -310,75 +328,74 @@ class MQTTProtocol(ProtocolBase):
                                 # Fallback a stringa
                                 payload = payload_str
                     
-                    # Se è un wildcard topic, aggrega i dati
+                    # Aggiorna lo stato in RAM
+                    current_time = datetime.now()
+                    
                     if self.is_wildcard_topic:
-                        # Estrai il tipo di dato dal topic (es: 'temperature' da '.../sensor/temperature')
+                        # Estrai il tipo di dato dal topic (es: 'temperature_1' da '.../sensor/temperature_1')
                         data_type, _ = self._extract_data_from_topic(topic)
                         
-                        # Aggrega nel dict con lock per garantire consistenza
+                        # Aggiorna lo stato in RAM con lock per garantire consistenza
                         async with self._data_lock:
+                            # Aggiorna lo stato in RAM
+                            self._ram_state[data_type] = payload
+                            self._ram_state_timestamp = current_time
+                            
+                            # Mantieni anche _aggregated_data e _last_data per compatibilità
                             if not hasattr(self, '_aggregated_data'):
                                 self._aggregated_data = {}
                             self._aggregated_data[data_type] = payload
-                            
-                            # Aggiorna _last_data con tutti i dati aggregati (copia profonda)
                             self._last_data = self._aggregated_data.copy()
-                            self._last_message_time = datetime.now()
+                            self._last_message_time = current_time
                         
                         print(f"Sensore {self.name}: Ricevuto messaggio MQTT su {topic} (tipo: {data_type}): {payload}")
-                        print(f"  Dati aggregati: {self._aggregated_data}")
+                        print(f"  Stato RAM aggiornato: {self._ram_state}")
                     else:
-                        # Topic normale, usa il payload direttamente (raw, senza processamento)
-                        # Il processamento specifico del plugin verrà fatto nel plugin stesso
-                        self._last_data = payload if isinstance(payload, dict) else {"value": payload}
+                        # Topic normale, aggiorna lo stato in RAM
+                        async with self._data_lock:
+                            if isinstance(payload, dict):
+                                # Se è un dict, unisci con lo stato esistente
+                                self._ram_state.update(payload)
+                            else:
+                                # Se è un valore semplice, usa "value" come chiave
+                                self._ram_state["value"] = payload
+                            
+                            self._ram_state_timestamp = current_time
+                            self._last_data = self._ram_state.copy()
+                            self._last_message_time = current_time
                     
                     self.update_last_update()
                     
-                    # Crea SensorData con timestamp preciso
-                    sensor_data = SensorData(
-                        sensor_name=self.name,
-                        timestamp=datetime.now(),
-                        data=self._last_data,
-                        status="ok"
-                    )
-                    
-                    # Salvataggio con debounce: aspetta 500ms dopo l'ultimo messaggio prima di salvare
-                    # Questo permette a tutti i messaggi di aggregarsi prima del salvataggio
-                    async def save_with_debounce():
-                        await asyncio.sleep(0.5)  # Aspetta 500ms
-                        async with self._save_lock:
-                            # Verifica che _last_data non sia cambiato durante l'attesa
-                            if self._last_data is not None:
-                                final_sensor_data = SensorData(
-                                    sensor_name=self.name,
-                                    timestamp=datetime.now(),
-                                    data=self._last_data,
-                                    status="ok"
-                                )
-                                if self.__class__._mongo_client:
-                                    try:
-                                        await self.__class__._mongo_client.save_sensor_data(final_sensor_data)
-                                    except Exception as e:
-                                        print(f"Errore salvataggio MongoDB MQTT per {self.name}: {e}")
-                    
-                    # Cancella il task precedente se esiste
-                    if self._save_task and not self._save_task.done():
-                        self._save_task.cancel()
-                    
-                    # Avvia nuovo task con debounce
-                    self._save_task = asyncio.create_task(save_with_debounce())
-                    
-                    # Notifica AutomationService immediatamente (non aspetta il debounce)
+                    # Notifica AutomationService con lo stato in RAM aggiornato (non bloccante)
                     if self.__class__._automation_service:
-                        try:
-                            await self.__class__._automation_service.on_sensor_data(self.name, sensor_data)
-                        except Exception as e:
-                            print(f"Errore automazione MQTT per {self.name}: {e}")
+                        # Crea task asincrono senza await per non bloccare il loop dei messaggi
+                        async def notify_automation():
+                            try:
+                                # Crea SensorData con lo stato in RAM corrente
+                                async with self._data_lock:
+                                    ram_state_copy = self._ram_state.copy()
+                                    ram_timestamp = self._ram_state_timestamp
+                                
+                                if ram_state_copy and ram_timestamp:
+                                    sensor_data = SensorData(
+                                        sensor_name=self.name,
+                                        timestamp=ram_timestamp,
+                                        data=ram_state_copy,
+                                        status="ok"
+                                    )
+                                    await self.__class__._automation_service.on_sensor_data(self.name, sensor_data)
+                            except Exception as e:
+                                print(f"Errore automazione MQTT per {self.name}: {e}")
+                        
+                        # Esegui in background senza bloccare il loop dei messaggi
+                        asyncio.create_task(notify_automation())
                     
                     # Notifica callbacks registrati
                     for callback in self._message_callbacks:
                         try:
-                            await callback(self.name, self._last_data)
+                            async with self._data_lock:
+                                state_copy = self._ram_state.copy()
+                            await callback(self.name, state_copy)
                         except Exception as e:
                             print(f"Errore in callback MQTT per {self.name}: {e}")
                 except json.JSONDecodeError as e:
@@ -395,29 +412,79 @@ class MQTTProtocol(ProtocolBase):
         """Registra un callback che viene chiamato quando arrivano messaggi"""
         self._message_callbacks.append(callback)
     
+    async def _periodic_save_loop(self) -> None:
+        """Task periodico che salva lo stato in RAM nel DB ogni 10 secondi"""
+        try:
+            while True:
+                await asyncio.sleep(10)  # Aspetta 10 secondi
+                
+                async with self._data_lock:
+                    # Verifica se ci sono dati da salvare
+                    if not self._ram_state or self._ram_state_timestamp is None:
+                        continue
+                    
+                    # Crea SensorData con lo stato corrente
+                    sensor_data = SensorData(
+                        sensor_name=self.name,
+                        timestamp=self._ram_state_timestamp,
+                        data=self._ram_state.copy(),
+                        status="ok"
+                    )
+                
+                # Salva nel DB (fuori dal lock per non bloccare)
+                if self.__class__._mongo_client:
+                    async with self._save_lock:
+                        try:
+                            await self.__class__._mongo_client.save_sensor_data(sensor_data)
+                            print(f"💾 Sensore {self.name}: Stato salvato nel DB (periodico)")
+                        except Exception as e:
+                            print(f"Errore salvataggio periodico MongoDB per {self.name}: {e}")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"Errore nel loop di salvataggio periodico per {self.name}: {e}")
+    
     async def read_data(self) -> SensorData:
-        """Legge l'ultimo dato ricevuto via MQTT (aggregato se wildcard topic)"""
-        # Restituisci immediatamente i dati disponibili (non aspettare)
-        # Il frontend ha polling adattivo che si aggiorna velocemente quando ci sono nuovi dati
-        # Questo evita di bloccare la richiesta HTTP e riduce la latenza
+        """Legge i dati dallo stato in RAM. Se il timestamp è più vecchio di 2 minuti, restituisce no data e segna come disconnesso"""
         async with self._data_lock:
-            if self._last_data is not None:
-                # Crea una copia profonda per evitare modifiche concorrenti
-                data_copy = self._last_data.copy()
+            current_time = datetime.now()
+            
+            # Verifica se ci sono dati nello stato in RAM
+            if not self._ram_state or self._ram_state_timestamp is None:
+                # Nessun dato disponibile
+                self.connected = False
                 return SensorData(
                     sensor_name=self.name,
-                    timestamp=datetime.now(),
-                    data=data_copy,
-                    status="ok"
-                )
-            else:
-                return SensorData(
-                    sensor_name=self.name,
-                    timestamp=datetime.now(),
+                    timestamp=current_time,
                     data={},
-                    status="ok",
+                    status="error",
                     error="Nessun dato disponibile"
                 )
+            
+            # Calcola il tempo trascorso dall'ultimo aggiornamento
+            time_since_update = (current_time - self._ram_state_timestamp).total_seconds()
+            
+            # Se il timestamp è più vecchio di 2 minuti (120 secondi), restituisci no data
+            if time_since_update > 120:
+                self.connected = False
+                return SensorData(
+                    sensor_name=self.name,
+                    timestamp=self._ram_state_timestamp,
+                    data={},
+                    status="error",
+                    error=f"Dati non aggiornati (ultimo aggiornamento: {time_since_update:.1f}s fa)"
+                )
+            
+            # Dati validi, restituisci lo stato in RAM
+            self.connected = True
+            # Crea una copia profonda per evitare modifiche concorrenti
+            data_copy = self._ram_state.copy()
+            return SensorData(
+                sensor_name=self.name,
+                timestamp=self._ram_state_timestamp,
+                data=data_copy,
+                status="ok"
+            )
     
     async def is_connected(self) -> bool:
         """Verifica se la connessione MQTT è attiva"""

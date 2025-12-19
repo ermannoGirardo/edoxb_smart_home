@@ -4,7 +4,7 @@ from typing import Optional
 import sys
 
 class AutomationService:
-    """Servizio di automazione centrale - logica hardcoded per cliente"""
+    """Servizio di automazione centrale - delega la logica ai plugin specifici"""
     
     def __init__(self, business_logic: BusinessLogic):
         self.business_logic = business_logic
@@ -37,7 +37,7 @@ class AutomationService:
             # Leggi la fase dal database
             phase = await self._get_growbox_phase(normalized_name)
             
-            # Chiama la funzione del plugin se disponibile
+            # Delega la logica al plugin se disponibile
             await self._call_plugin_automation(normalized_name, data.data, phase)
     
     async def _get_growbox_phase(self, sensor_name: str) -> Optional[str]:
@@ -57,7 +57,17 @@ class AutomationService:
     async def _call_plugin_automation(self, sensor_name: str, data: dict, phase: Optional[str]):
         """Chiama la funzione di automazione del plugin se disponibile"""
         try:
-            # Prova a importare il modulo del plugin arduino_grow_box
+            # Log dei valori ricevuti
+            print("=" * 60)
+            print(f"🌱 GROWBOX - Messaggio ricevuto")
+            print(f"   Sensore: {sensor_name}")
+            print(f"   Fase corrente: {phase or 'NON IMPOSTATA'}")
+            print(f"   Valori ricevuti:")
+            for key, value in data.items():
+                print(f"     - {key}: {value}")
+            print("=" * 60)
+            
+            # Cerca il plugin arduino_grow_box
             plugin_module_name = "sensor_arduino_grow_box"
             
             if plugin_module_name in sys.modules:
@@ -67,13 +77,20 @@ class AutomationService:
                 if hasattr(plugin_module, "handle_growbox_automation"):
                     handler = getattr(plugin_module, "handle_growbox_automation")
                     if callable(handler):
+                        print("📦 Chiamata funzione plugin handle_growbox_automation")
                         await handler(sensor_name, data, phase)
                         return
             
-            # Se il plugin non è disponibile, log di default
-            print(f"GROWBOX {sensor_name}: Dati ricevuti (fase: {phase or 'non impostata'})")
-            print(f"  Dati: {data}")
+            # Se il plugin non è disponibile, log di avviso
+            if not phase:
+                print(f"⚠️  [ATTENZIONE] Fase non impostata per {sensor_name}")
+                print(f"   Nessuna automazione applicata. Valori ricevuti: {data}")
+            else:
+                print(f"⚠️  [ATTENZIONE] Plugin arduino_grow_box non disponibile per {sensor_name}")
+                print(f"   Fase: {phase}, Valori ricevuti: {data}")
             
         except Exception as e:
-            print(f"Errore chiamata automazione plugin growbox: {e}")
+            print(f"❌ Errore chiamata automazione plugin growbox: {e}")
+            import traceback
+            traceback.print_exc()
 
